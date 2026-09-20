@@ -1,90 +1,105 @@
 # PDF Tools
 
-Um conjunto de ferramentas de PDF que roda **inteiramente na sua máquina**. Sem upload, sem limite de arquivos, sem marca d'água, sem conta, de graça.
+**Ferramentas de PDF que funcionam no seu computador. De graça, sem limite e sem enviar seus arquivos para lugar nenhum.**
 
-A ideia é simples: as tarefas que normalmente levam você a um site tipo iLovePDF não deveriam exigir mandar seus documentos para o servidor de outra pessoa.
+Sabe quando você precisa juntar dois PDFs, ou o arquivo está grande demais para o e-mail? A saída costuma ser um daqueles sites que pedem para você subir o documento. Só que esse documento pode ser um contrato, um holerite, um exame médico — e ele vai parar no servidor de um desconhecido, muitas vezes com limite de dois arquivos por dia e propaganda no meio.
 
-## Ferramentas
+Este programa faz o mesmo serviço, mas **tudo acontece dentro da sua máquina**. Nada sobe para a internet. Não tem cadastro, não tem mensalidade, não tem limite de arquivos nem marca d'água forçada no resultado.
 
-**Organizar**
+## Como começar
 
-| Ferramenta | O que faz |
+1. Baixe o arquivo **`PDF Tools.exe`** na página de [Releases](../../releases)
+2. Dê dois cliques nele
+3. Pronto
+
+Não precisa instalar nada, nem ter Python ou qualquer outro programa. É um arquivo único: dá para deixar na área de trabalho, num pen drive ou numa pasta de rede.
+
+> **O Windows mostrou um aviso azul de "aplicativo não reconhecido"?**
+> Isso é normal e acontece com todo programa pequeno que não paga por um certificado digital (que custa algumas centenas de dólares por ano). Clique em **Mais informações** e depois em **Executar assim mesmo**. Se preferir conferir antes, todo o código está aqui neste repositório, aberto para qualquer um ler.
+
+## O que dá para fazer
+
+### Organizar documentos
+
+| | |
 |---|---|
-| **Juntar PDFs** | Combina vários PDFs em um só, criando um marcador por arquivo para o resultado continuar navegável |
-| **Dividir PDF** | Separa um PDF em partes (ao meio, a cada N páginas ou por tamanho) |
-| **Páginas** | Extrai, remove ou reordena páginas por intervalo (`1-3, 7, 10-`) |
-| **Numerar Páginas** | Insere números de página com formato, posição e margem à escolha; pode pular a capa sem contá-la |
-| **Girar PDF** | Gira páginas com pré-visualização — você vê o resultado antes de salvar |
-| **Cortar PDF** | Desenha a área de corte direto sobre a página |
+| **Juntar PDFs** | Vários arquivos viram um só, na ordem que você escolher. O resultado já vem com um índice, com o nome de cada documento que entrou |
+| **Dividir PDF** | Separa um arquivo grande em partes menores |
+| **Páginas** | Tira as páginas que você não quer, separa só as que interessam, ou muda a ordem delas |
+| **Numerar Páginas** | Coloca o número em cada página. Dá para pular a capa e escolher onde o número aparece |
+| **Girar PDF** | Endireita páginas que foram digitalizadas de lado. Você vê como vai ficar antes de salvar |
+| **Cortar PDF** | Recorta só o pedaço da página que interessa, desenhando com o mouse |
 
-**Converter**
+### Converter e reduzir
 
-| Ferramenta | O que faz |
+| | |
 |---|---|
-| **Imagens para PDF** | Converte JPG, PNG e WebP em um único PDF |
-| **PDF para Imagens** | Exporta cada página como imagem |
-| **Tons de Cinza** | Converte páginas coloridas para cinza e economiza toner; páginas já em preto e branco ficam intactas, com o texto pesquisável |
-| **Comprimir** | Reduz o tamanho por qualidade de imagem e por limite de resolução (300/150/96 dpi) |
+| **Imagens para PDF** | Junta fotos, prints e digitalizações em um PDF só |
+| **PDF para Imagens** | Transforma cada página do PDF em uma imagem |
+| **Tons de Cinza** | Tira as cores para gastar menos tinta na impressão |
+| **Comprimir** | Deixa o arquivo mais leve, para caber no e-mail ou no site que só aceita 5 MB |
 
-**Impressão**
+### Preparar para imprimir
 
-| Ferramenta | O que faz |
+| | |
 |---|---|
-| **Adicionar Margens** | Bordas brancas com medida independente nas 4 bordas, modo encadernação (margem interna espelhada) e pré-visualização página a página |
-| **Montar Folhas** | 2 páginas por folha, ou livreto com a ordem certa para dobrar e grampear no centro |
-| **Verificar Impressão** | Relatório apontando tamanhos de página misturados, imagens de baixa resolução, fontes não embutidas, conteúdo fora da área segura e páginas em branco |
+| **Adicionar Margens** | Aumenta a borda branca da página. Tem um modo para documentos que vão ser encadernados, em que a margem de dentro é maior e troca de lado a cada página |
+| **Montar Folhas** | Coloca duas páginas em cada folha (economiza metade do papel) ou monta um livreto, já na ordem certa para dobrar e grampear no meio |
+| **Verificar Impressão** | Avisa dos problemas antes de você gastar papel: páginas de tamanhos diferentes no mesmo arquivo, imagens que vão sair borradas, texto colado demais na borda |
 
-**Segurança**
+### Proteger documentos
 
-| Ferramenta | O que faz |
+| | |
 |---|---|
-| **Proteger com Senha** | Criptografa em AES-256, com controle de impressão e cópia de texto |
-| **Remover Senha** | Remove a proteção de PDFs, informando a senha que os abre |
-| **Marca d'Água** | Carimba um texto na diagonal ou no rodapé (CONFIDENCIAL, CÓPIA, RASCUNHO…), com cor e intensidade ajustáveis |
-| **Limpar Metadados** | Remove autor, software e histórico de edição antes de enviar o arquivo |
+| **Proteger com Senha** | Tranca o arquivo com uma senha, e você escolhe se quem abrir pode imprimir ou copiar o texto |
+| **Remover Senha** | Tira a senha de um arquivo protegido, desde que você saiba qual é |
+| **Marca d'Água** | Carimba CONFIDENCIAL, CÓPIA, RASCUNHO ou o texto que você quiser por cima das páginas |
+| **Limpar Metadados** | Todo PDF guarda escondido o nome de quem criou e com qual programa. Isso apaga esses rastros antes de você mandar o arquivo para fora |
 
-Interface com arrastar e soltar, tema claro/escuro automático, barra de progresso e cancelamento no meio da operação.
+Você pode arrastar os arquivos direto para dentro do programa, trabalhar com vários de uma vez, e cancelar no meio se mudar de ideia. Tem tema claro e escuro.
 
-## Instalação
+## Perguntas comuns
 
-### Opção 1 — Executável (recomendado)
+**Meus arquivos vão para a internet?**
+Não. O programa não se conecta a lugar nenhum. Seus documentos não saem do computador.
 
-Baixe o `PDF Tools.exe` mais recente em [Releases](../../releases). É um arquivo único, não precisa instalar nada — nem Python.
+**Funciona sem internet?**
+Funciona. Depois de baixar, você pode até desligar a rede.
 
-### Opção 2 — Rodar pelo código-fonte
+**Tem limite de arquivos ou de tamanho?**
+Não. Pode processar cem arquivos de uma vez se o seu computador der conta.
 
-Requer Python 3.11 ou superior (desenvolvido no 3.13).
+**É grátis de verdade? Tem pegadinha?**
+É grátis, sem versão paga, sem anúncio e sem pedir cadastro. O código é aberto: qualquer pessoa pode verificar o que ele faz.
+
+**O programa mexe nos meus arquivos originais?**
+Não. Ele sempre cria arquivos novos, com um nome diferente. O original fica como estava.
+
+**Funciona em Mac ou Linux?**
+O arquivo pronto é só para Windows. Em outros sistemas dá para rodar pelo código-fonte (instruções no final).
+
+**Achei um problema ou queria que fizesse outra coisa.**
+Abra um chamado em [Issues](../../issues) contando o que aconteceu.
+
+## Licença
+
+Livre para usar, copiar e modificar, inclusive em empresa. Veja [LICENSE](LICENSE).
+
+---
+
+## Para quem programa
+
+Feito em Python com PyMuPDF, pypdf, Pillow e CustomTkinter, empacotado com PyInstaller.
 
 ```bash
 git clone https://github.com/danfreitas97/pdf-tools.git
 cd pdf-tools
-
 python -m venv .venv
-.venv\Scripts\activate        # Windows
-# source .venv/bin/activate   # Linux/macOS
-
+.venv\Scripts\activate          # no Windows
 pip install -r requirements.txt
 python app.py
 ```
 
-## Gerar o executável
+Para gerar o `.exe`, com PowerShell no Windows: `.\build.ps1`. O script cria um ambiente virtual isolado, instala as dependências em versões fixas e monta o executável em `dist\`. O isolamento é proposital: sem ele, bibliotecas pesadas instaladas globalmente acabam dentro do arquivo final.
 
-No Windows, com PowerShell:
-
-```powershell
-.\build.ps1
-```
-
-O script cria um `.venv` isolado, instala as dependências e o PyInstaller, e gera `dist\PDF Tools.exe`. O ambiente isolado é proposital: sem ele, pacotes pesados instalados globalmente (pandas, matplotlib, pyarrow) acabam empacotados dentro do executável.
-
-## Privacidade
-
-Nenhum arquivo sai da sua máquina. O programa não faz requisições de rede. A única coisa que ele grava fora da pasta do projeto são suas preferências de interface, em `%APPDATA%\PDF Tools\settings.json`.
-
-## Tecnologias
-
-[PyMuPDF](https://pymupdf.readthedocs.io/) e [pypdf](https://pypdf.readthedocs.io/) para manipulação dos PDFs, [Pillow](https://python-pillow.org/) para imagens, [cryptography](https://cryptography.io/) para a criptografia AES-256, [CustomTkinter](https://customtkinter.tomschimansky.com/) para a interface e [PyInstaller](https://pyinstaller.org/) para o empacotamento.
-
-## Licença
-
-MIT — veja [LICENSE](LICENSE).
+As preferências de interface ficam em `%APPDATA%\PDF Tools\settings.json`. Senhas nunca são gravadas.
