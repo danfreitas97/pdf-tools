@@ -1,4 +1,5 @@
 import io
+import math
 import re
 import shutil
 from pathlib import Path
@@ -52,7 +53,9 @@ def _pages_to_bytes(reader, page_numbers):
     writer.write(buf)
     return buf.getvalue()
 
-def merge_pdfs(input_files, output_file, progress_callback=None, cancel_event=None):
+def merge_pdfs(input_files, output_file, add_bookmarks=True, progress_callback=None, cancel_event=None):
+    """add_bookmarks adds one outline entry per source file, named after it, so a merged
+    stack of documents stays navigable instead of becoming one undivided run of pages."""
     writer = PdfWriter()
     errors = []
     total = len(input_files)
@@ -61,7 +64,7 @@ def merge_pdfs(input_files, output_file, progress_callback=None, cancel_event=No
         if progress_callback:
             progress_callback(i, total, f"Adicionando {Path(pdf).name}...")
         try:
-            writer.append(str(pdf))
+            writer.append(str(pdf), outline_item=Path(pdf).stem if add_bookmarks else None)
         except Exception as e:
             errors.append(f"{Path(pdf).name}: {e}")
 
@@ -848,6 +851,139 @@ def grayscale_pdfs(input_files, output_dir, dpi=200, progress_callback=None, can
 
                 out_file = Path(output_dir) / f"{stem}_cinza.pdf"
                 out_doc.save(str(out_file), garbage=4, deflate=True)
+        except Exception as e:
+            errors.append(f"{pdf.name}: {e}")
+
+    if progress_callback:
+        progress_callback(total, total, "Concluído!")
+    return errors
+
+NUMBER_POSITIONS = ("inferior-centro", "inferior-direita", "inferior-esquerda",
+                    "superior-centro", "superior-direita", "superior-esquerda")
+
+def _number_point(page_rect, position, text_width, font_size, margin_pt):
+    """Baseline point for the page number, given a corner or centre position."""
+    top = position.startswith("superior")
+    y = page_rect.y0 + margin_pt + font_size if top else page_rect.y1 - margin_pt
+
+    if position.endswith("centro"):
+        x = page_rect.x0 + (page_rect.width - text_width) / 2
+    elif position.endswith("direita"):
+        x = page_rect.x1 - margin_pt - text_width
+    else:
+        x = page_rect.x0 + margin_pt
+    return pymupdf.Point(x, y)
+
+def number_pages(input_files, output_dir, number_format="{n}", position="inferior-centro",
+                 start_at=1, first_page=1, font_size=10, margin_mm=10,
+                 progress_callback=None, cancel_event=None):
+    """Stamps page numbers on each page.
+
+    number_format takes {n} (the printed number) and {total} (the last number printed).
+    start_at is the number given to the first numbered page; first_page is which physical
+    page starts the numbering, so a cover can be skipped and still not be counted.
+    """
+    MM_TO_PT = 2.83465
+    margin_pt = margin_mm * MM_TO_PT
+    errors = []
+    total_files = len(input_files)
+
+    for i, (pdf_path, stem) in enumerate(zip(input_files, _output_stems(input_files))):
+        _check_cancel(cancel_event)
+        pdf = Path(pdf_path)
+        if progress_callback:
+            progress_callback(i, total_files, f"Numerando {pdf.name}...")
+
+        try:
+            with pymupdf.open(str(pdf)) as doc:
+                if doc.needs_pass:
+                    raise ValueError("protegido por senha")
+                if first_page > doc.page_count:
+                    raise ValueError(f"a numeração começaria na página {first_page}, "
+                                     f"mas o documento tem {doc.page_count}")
+
+                last_number = start_at + doc.page_count - first_page
+                for p_num in range(first_page - 1, doc.page_count):
+                    _check_cancel(cancel_event)
+                    page = doc[p_num]
+                    n = start_at + p_num - (first_page - 1)
+                    try:
+                        text = number_format.format(n=n, total=last_number)
+                    except (KeyError, IndexError, ValueError):
+                        raise ValueError(f"formato inválido: '{number_format}'. Use {{n}} e {{total}}.")
+
+                    width = pymupdf.get_text_length(text, fontname="helv", fontsize=font_size)
+                    point = _number_point(page.rect, position, width, font_size, margin_pt)
+                    page.insert_text(point, text, fontname="helv", fontsize=font_size, color=(0, 0, 0))
+
+                out_file = Path(output_dir) / f"{stem}_numerado.pdf"
+                doc.save(str(out_file), garbage=4, deflate=True)
+        except Exception as e:
+            errors.append(f"{pdf.name}: {e}")
+
+    if progress_callback:
+        progress_callback(total_files, total_files, "Concluído!")
+    return errors
+
+WATERMARK_COLORS = {"Cinza": (0.5, 0.5, 0.5), "Vermelho": (0.8, 0.1, 0.1), "Azul": (0.1, 0.3, 0.7)}
+
+def watermark_pdfs(input_files, output_dir, text="CONFIDENCIAL", layout="diagonal",
+                   font_size=54, opacity=0.15, color="Cinza",
+                   progress_callback=None, cancel_event=None):
+    """Stamps text over every page. "diagonal" runs corner to corner across the middle of
+    the page; "rodape" sits along the bottom. The text goes on top of the content, so a low
+    opacity is what keeps the document readable."""
+    if not text or not text.strip():
+        raise ValueError("Informe o texto da marca d'água.")
+    text = text.strip()
+    rgb = WATERMARK_COLORS.get(color, WATERMARK_COLORS["Cinza"])
+
+    errors = []
+    total = len(input_files)
+    for i, (pdf_path, stem) in enumerate(zip(input_files, _output_stems(input_files))):
+        _check_cancel(cancel_event)
+        pdf = Path(pdf_path)
+        if progress_callback:
+            progress_callback(i, total, f"Aplicando marca d'água em {pdf.name}...")
+
+        try:
+            with pymupdf.open(str(pdf)) as doc:
+                if doc.needs_pass:
+                    raise ValueError("protegido por senha")
+
+                for p_num in range(doc.page_count):
+                    _check_cancel(cancel_event)
+                    page = doc[p_num]
+                    rect = page.rect
+
+                    if layout == "rodape":
+                        size = min(font_size, 24)
+                        width = pymupdf.get_text_length(text, fontname="hebo", fontsize=size)
+                        point = pymupdf.Point(rect.x0 + (rect.width - width) / 2, rect.y1 - 20)
+                        writer = pymupdf.TextWriter(rect)
+                        writer.append(point, text, fontsize=size, font=pymupdf.Font("hebo"))
+                        writer.write_text(page, color=rgb, opacity=opacity)
+                    else:
+                        # Shrink until the rotated text fits the page diagonal
+                        size = font_size
+                        diagonal = (rect.width ** 2 + rect.height ** 2) ** 0.5
+                        while size > 8 and pymupdf.get_text_length(text, fontname="hebo", fontsize=size) > diagonal * 0.8:
+                            size -= 2
+
+                        width = pymupdf.get_text_length(text, fontname="hebo", fontsize=size)
+                        centre = pymupdf.Point((rect.x0 + rect.x1) / 2, (rect.y0 + rect.y1) / 2)
+                        start = pymupdf.Point(centre.x - width / 2, centre.y + size / 3)
+
+                        writer = pymupdf.TextWriter(rect)
+                        writer.append(start, text, fontsize=size, font=pymupdf.Font("hebo"))
+                        # morph rotates around the centre; insert_text only does right angles.
+                        # Positive angle runs bottom-left to top-right, as watermarks usually do.
+                        angle = math.degrees(math.atan2(rect.height, rect.width))
+                        writer.write_text(page, color=rgb, opacity=opacity,
+                                          morph=(centre, pymupdf.Matrix(angle)))
+
+                out_file = Path(output_dir) / f"{stem}_marca.pdf"
+                doc.save(str(out_file), garbage=4, deflate=True)
         except Exception as e:
             errors.append(f"{pdf.name}: {e}")
 

@@ -10,9 +10,10 @@ A ideia é simples: as tarefas que normalmente levam você a um site tipo iLoveP
 
 | Ferramenta | O que faz |
 |---|---|
-| **Juntar PDFs** | Combina vários PDFs em um só, na ordem que você definir |
+| **Juntar PDFs** | Combina vários PDFs em um só, criando um marcador por arquivo para o resultado continuar navegável |
 | **Dividir PDF** | Separa um PDF em partes (ao meio, a cada N páginas ou por tamanho) |
 | **Páginas** | Extrai, remove ou reordena páginas por intervalo (`1-3, 7, 10-`) |
+| **Numerar Páginas** | Insere números de página com formato, posição e margem à escolha; pode pular a capa sem contá-la |
 | **Girar PDF** | Gira páginas com pré-visualização — você vê o resultado antes de salvar |
 | **Cortar PDF** | Desenha a área de corte direto sobre a página |
 
@@ -39,6 +40,7 @@ A ideia é simples: as tarefas que normalmente levam você a um site tipo iLoveP
 |---|---|
 | **Proteger com Senha** | Criptografa em AES-256, com controle de impressão e cópia de texto |
 | **Remover Senha** | Remove a proteção de PDFs, informando a senha que os abre |
+| **Marca d'Água** | Carimba um texto na diagonal ou no rodapé (CONFIDENCIAL, CÓPIA, RASCUNHO…), com cor e intensidade ajustáveis |
 | **Limpar Metadados** | Remove autor, software e histórico de edição antes de enviar o arquivo |
 
 Interface com arrastar e soltar, tema claro/escuro automático, barra de progresso e cancelamento no meio da operação.

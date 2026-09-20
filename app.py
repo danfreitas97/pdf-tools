@@ -1043,6 +1043,174 @@ class GrayscaleOptions(ctk.CTkFrame):
             self.entry_dpi.insert(0, format_number(float(values["dpi"])))
 
 
+class MergeOptions(OutputFilenameOptions):
+    """Same as the plain output name, plus the per-file bookmarks. Kept separate from
+    OutputFilenameOptions because images_to_pdf shares that one and takes no bookmarks."""
+
+    def __init__(self, master):
+        super().__init__(master)
+        self.bookmark_var = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(self, text="Criar marcador para cada arquivo",
+                        variable=self.bookmark_var).pack(side="left", padx=(20, 5))
+        ctk.CTkLabel(self, text="(facilita navegar no PDF final)",
+                     font=ctk.CTkFont(size=12, slant="italic"), text_color="gray").pack(side="left", padx=5)
+
+    def get_values(self):
+        values = super().get_values()
+        values["add_bookmarks"] = self.bookmark_var.get()
+        return values
+
+    def load_values(self, values):
+        self.bookmark_var.set(bool(values.get("add_bookmarks", True)))
+
+
+class NumberPagesOptions(ctk.CTkFrame):
+    FORMATS = {"1, 2, 3": "{n}", "1 de 10": "{n} de {total}",
+               "Pág. 1": "Pág. {n}", "- 1 -": "- {n} -"}
+    POSITIONS = {"Inferior centro": "inferior-centro", "Inferior direita": "inferior-direita",
+                 "Inferior esquerda": "inferior-esquerda", "Superior centro": "superior-centro",
+                 "Superior direita": "superior-direita", "Superior esquerda": "superior-esquerda"}
+
+    def __init__(self, master):
+        super().__init__(master, fg_color="transparent")
+
+        row1 = ctk.CTkFrame(self, fg_color="transparent")
+        row1.grid(row=0, column=0, sticky="w")
+
+        ctk.CTkLabel(row1, text="Formato:").pack(side="left", padx=(5, 5))
+        self.format_menu = ctk.CTkOptionMenu(row1, width=120, values=list(self.FORMATS))
+        self.format_menu.set("1, 2, 3")
+        self.format_menu.pack(side="left", padx=(0, 15))
+
+        ctk.CTkLabel(row1, text="Posição:").pack(side="left", padx=(5, 5))
+        self.position_menu = ctk.CTkOptionMenu(row1, width=150, values=list(self.POSITIONS))
+        self.position_menu.set("Inferior centro")
+        self.position_menu.pack(side="left", padx=(0, 15))
+
+        ctk.CTkLabel(row1, text="Tamanho:").pack(side="left", padx=(5, 5))
+        self.entry_size = ctk.CTkEntry(row1, width=50)
+        self.entry_size.insert(0, "10")
+        self.entry_size.pack(side="left")
+
+        row2 = ctk.CTkFrame(self, fg_color="transparent")
+        row2.grid(row=1, column=0, sticky="w", pady=(6, 0))
+
+        ctk.CTkLabel(row2, text="Começar a numerar na página:").pack(side="left", padx=(5, 5))
+        self.entry_first = ctk.CTkEntry(row2, width=50)
+        self.entry_first.insert(0, "1")
+        self.entry_first.pack(side="left", padx=(0, 15))
+
+        ctk.CTkLabel(row2, text="contando a partir do número:").pack(side="left", padx=(5, 5))
+        self.entry_start = ctk.CTkEntry(row2, width=50)
+        self.entry_start.insert(0, "1")
+        self.entry_start.pack(side="left", padx=(0, 15))
+
+        ctk.CTkLabel(row2, text="Margem (mm):").pack(side="left", padx=(5, 5))
+        self.entry_margin = ctk.CTkEntry(row2, width=50)
+        self.entry_margin.insert(0, "10")
+        self.entry_margin.pack(side="left")
+
+        ctk.CTkLabel(self, text="Para pular a capa, comece na página 2 — ela não entra na contagem.",
+                     font=ctk.CTkFont(size=12, slant="italic"), text_color="gray"
+                     ).grid(row=2, column=0, sticky="w", padx=5, pady=(4, 0))
+
+    def get_values(self):
+        size = parse_number(self.entry_size.get(), "Tamanho", 10)
+        if not 4 <= size <= 72:
+            raise ValueError("O tamanho da fonte deve ficar entre 4 e 72.")
+        first = parse_number(self.entry_first.get(), "Começar a numerar na página", 1)
+        if first < 1:
+            raise ValueError("A numeração precisa começar na página 1 ou depois.")
+        return {"number_format": self.FORMATS[self.format_menu.get()],
+                "position": self.POSITIONS[self.position_menu.get()],
+                "font_size": size,
+                "first_page": int(first),
+                "start_at": int(parse_number(self.entry_start.get(), "Número inicial", 1)),
+                "margin_mm": parse_number(self.entry_margin.get(), "Margem", 10)}
+
+    def load_values(self, values):
+        for rotulo, valor in self.FORMATS.items():
+            if valor == values.get("number_format"):
+                self.format_menu.set(rotulo)
+        for rotulo, valor in self.POSITIONS.items():
+            if valor == values.get("position"):
+                self.position_menu.set(rotulo)
+        for entry, key in ((self.entry_size, "font_size"), (self.entry_first, "first_page"),
+                           (self.entry_start, "start_at"), (self.entry_margin, "margin_mm")):
+            if key in values:
+                entry.delete(0, "end")
+                entry.insert(0, format_number(float(values[key])))
+
+
+class WatermarkOptions(ctk.CTkFrame):
+    PRESETS = ["CONFIDENCIAL", "CÓPIA", "RASCUNHO", "MINUTA", "URGENTE"]
+    LAYOUTS = {"Diagonal": "diagonal", "Rodapé": "rodape"}
+    OPACITIES = {"Bem clara": 0.08, "Clara": 0.15, "Média": 0.25, "Forte": 0.4}
+
+    def __init__(self, master):
+        super().__init__(master, fg_color="transparent")
+
+        row1 = ctk.CTkFrame(self, fg_color="transparent")
+        row1.grid(row=0, column=0, sticky="w")
+
+        ctk.CTkLabel(row1, text="Texto:").pack(side="left", padx=(5, 5))
+        self.combo = ctk.CTkComboBox(row1, width=190, values=self.PRESETS)
+        self.combo.set("CONFIDENCIAL")
+        self.combo.pack(side="left", padx=(0, 15))
+
+        ctk.CTkLabel(row1, text="Posição:").pack(side="left", padx=(5, 5))
+        self.layout_menu = ctk.CTkOptionMenu(row1, width=110, values=list(self.LAYOUTS))
+        self.layout_menu.set("Diagonal")
+        self.layout_menu.pack(side="left", padx=(0, 15))
+
+        ctk.CTkLabel(row1, text="Cor:").pack(side="left", padx=(5, 5))
+        self.color_menu = ctk.CTkOptionMenu(row1, width=110, values=list(pdf_tools.WATERMARK_COLORS))
+        self.color_menu.set("Cinza")
+        self.color_menu.pack(side="left")
+
+        row2 = ctk.CTkFrame(self, fg_color="transparent")
+        row2.grid(row=1, column=0, sticky="w", pady=(6, 0))
+
+        ctk.CTkLabel(row2, text="Intensidade:").pack(side="left", padx=(5, 5))
+        self.opacity_menu = ctk.CTkOptionMenu(row2, width=120, values=list(self.OPACITIES))
+        self.opacity_menu.set("Clara")
+        self.opacity_menu.pack(side="left", padx=(0, 15))
+
+        ctk.CTkLabel(row2, text="Tamanho:").pack(side="left", padx=(5, 5))
+        self.entry_size = ctk.CTkEntry(row2, width=50)
+        self.entry_size.insert(0, "54")
+        self.entry_size.pack(side="left", padx=(0, 15))
+
+        ctk.CTkLabel(row2, text="A marca fica sobre o conteúdo; textos longos diminuem para caber.",
+                     font=ctk.CTkFont(size=12, slant="italic"), text_color="gray").pack(side="left", padx=5)
+
+    def get_values(self):
+        text = self.combo.get().strip()
+        if not text:
+            raise ValueError("Informe o texto da marca d'água.")
+        size = parse_number(self.entry_size.get(), "Tamanho", 54)
+        if not 8 <= size <= 200:
+            raise ValueError("O tamanho da marca deve ficar entre 8 e 200.")
+        return {"text": text, "layout": self.LAYOUTS[self.layout_menu.get()],
+                "color": self.color_menu.get(), "font_size": size,
+                "opacity": self.OPACITIES[self.opacity_menu.get()]}
+
+    def load_values(self, values):
+        if values.get("text"):
+            self.combo.set(values["text"])
+        for rotulo, valor in self.LAYOUTS.items():
+            if valor == values.get("layout"):
+                self.layout_menu.set(rotulo)
+        if values.get("color") in pdf_tools.WATERMARK_COLORS:
+            self.color_menu.set(values["color"])
+        for rotulo, valor in self.OPACITIES.items():
+            if valor == values.get("opacity"):
+                self.opacity_menu.set(rotulo)
+        if "font_size" in values:
+            self.entry_size.delete(0, "end")
+            self.entry_size.insert(0, format_number(float(values["font_size"])))
+
+
 class MarginPreview(ctk.CTkToplevel):
     """Shows what the margins will do to a real page, using the same geometry the export
     uses, so the preview can't drift from the result."""
@@ -1729,9 +1897,10 @@ class Dashboard(ctk.CTkFrame):
 
 TOOL_GROUPS = (
     ("Organizar", {
-        "Juntar PDFs": ("Junte vários PDFs em um só", pdf_tools.merge_pdfs, OutputFilenameOptions),
+        "Juntar PDFs": ("Junte vários PDFs em um só", pdf_tools.merge_pdfs, MergeOptions),
         "Dividir PDF": ("Divida um PDF em partes", pdf_tools.split_pdfs, SplitOptions),
         "Páginas": ("Extraia, remova ou reordene páginas", pdf_tools.select_pages, PagesOptions),
+        "Numerar Páginas": ("Insira números de página", pdf_tools.number_pages, NumberPagesOptions),
         "Girar PDF": ("Gire as páginas visualmente", None, None),
         "Cortar PDF": ("Corte as áreas visualmente", None, None),
     }),
@@ -1749,6 +1918,7 @@ TOOL_GROUPS = (
     ("Segurança", {
         "Proteger com Senha": ("Criptografe o PDF com senha", pdf_tools.protect_pdfs, ProtectOptions),
         "Remover Senha": ("Tire a proteção de PDFs cuja senha você tem", pdf_tools.unlock_pdfs, UnlockOptions),
+        "Marca d'Água": ("Carimbe um texto sobre as páginas", pdf_tools.watermark_pdfs, WatermarkOptions),
         "Limpar Metadados": ("Remova autor e histórico do arquivo", pdf_tools.clean_metadata, None),
     }),
 )
