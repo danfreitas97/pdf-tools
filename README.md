@@ -30,7 +30,7 @@ Baixe o `PDF Tools.exe` mais recente em [Releases](../../releases). É um arquiv
 Requer Python 3.11 ou superior (desenvolvido no 3.13).
 
 ```bash
-git clone https://github.com/<seu-usuario>/pdf-tools.git
+git clone https://github.com/danfreitas97/pdf-tools.git
 cd pdf-tools
 
 python -m venv .venv
