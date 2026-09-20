@@ -8,13 +8,8 @@ from pypdf.constants import UserAccessPermissions
 from PIL import Image, ImageOps, ImageChops
 import pymupdf
 
-# Batch functions return a list of "arquivo: erro" strings instead of printing,
-# because the packaged app has no console where print() output could be seen.
-# They accept a threading.Event as cancel_event and raise Cancelled when it is set.
-
 class Cancelled(BaseException):
-    """Raised when the user cancels. Derives from BaseException so the per-file
-    `except Exception` handlers don't swallow it."""
+    """Exceção levantada quando a operação é cancelada pelo usuário."""
 
 def _check_cancel(cancel_event):
     if cancel_event is not None and cancel_event.is_set():
@@ -28,8 +23,7 @@ def format_size(num_bytes):
     return f"{num_bytes:.1f} GB".replace(".", ",")
 
 def _output_stems(input_files):
-    """Stems used to name outputs. Inputs sharing a name (e.g. from different folders)
-    get _2, _3... so their outputs don't overwrite each other."""
+    """Gera nomes base únicos para os arquivos de saída."""
     taken = {Path(f).stem.lower() for f in input_files}
     seen = set()
     stems = []
@@ -54,8 +48,7 @@ def _pages_to_bytes(reader, page_numbers):
     return buf.getvalue()
 
 def merge_pdfs(input_files, output_file, add_bookmarks=True, progress_callback=None, cancel_event=None):
-    """add_bookmarks adds one outline entry per source file, named after it, so a merged
-    stack of documents stays navigable instead of becoming one undivided run of pages."""
+    """Junta múltiplos arquivos PDF em um só."""
     writer = PdfWriter()
     errors = []
     total = len(input_files)
@@ -114,9 +107,7 @@ def split_pdfs(input_files, output_dir, split_mode="half", split_param=None, pro
                     def fits(end):
                         _check_cancel(cancel_event)
                         return len(_pages_to_bytes(reader, range(start, end))) <= target_bytes
-                    # A part always takes at least one page, even if that page alone exceeds the target.
-                    # Find the largest end that fits: grow the step exponentially, then binary search,
-                    # so each part costs O(log n) test writes instead of one write per page.
+                    # Busca o maior número de páginas que cabe no tamanho limite
                     good, bad, step = start + 1, None, 1
                     while good < num_pages:
                         cand = min(good + step, num_pages)
@@ -150,11 +141,9 @@ def split_pdfs(input_files, output_dir, split_mode="half", split_param=None, pro
     return errors
 
 def _downsample_images(pdf_bytes, max_dpi, cancel_event=None):
-    """Re-samples images that sit on the page at more resolution than the printer can use.
-    A 600 dpi scan placed on an A4 page is four times the data of a 300 dpi one and looks
-    identical on paper. Returns the new bytes, or the original if nothing changed."""
+    """Reduz a resolução das imagens que excederem o DPI limite."""
     changed = False
-    done = set() # an image shared by several pages is re-sampled once
+    done = set()
     with pymupdf.open(stream=pdf_bytes, filetype="pdf") as doc:
         for page in doc:
             _check_cancel(cancel_event)
@@ -171,14 +160,14 @@ def _downsample_images(pdf_bytes, max_dpi, cancel_event=None):
                     continue
 
                 dpi = min(px_w / (shown.width / 72), px_h / (shown.height / 72))
-                if dpi <= max_dpi * 1.1: # ignore near-misses: re-encoding would cost more than it saves
+                if dpi <= max_dpi * 1.1:
                     continue
 
                 try:
                     src = doc.extract_image(xref)
                     pil = Image.open(io.BytesIO(src["image"]))
                     if pil.mode in ("RGBA", "LA", "PA") or src.get("smask"):
-                        continue # transparency would be lost when re-encoding as JPEG
+                        continue  # ignora imagens com transparência
                     scale = max_dpi / dpi
                     new_size = (max(1, int(px_w * scale)), max(1, int(px_h * scale)))
                     pil = pil.convert("RGB" if pil.mode not in ("RGB", "L") else pil.mode)
@@ -189,14 +178,13 @@ def _downsample_images(pdf_bytes, max_dpi, cancel_event=None):
                         page.replace_image(xref, stream=buf.getvalue())
                         changed = True
                 except Exception:
-                    pass # an image that resists re-encoding is left exactly as it was
+                    pass
 
         return doc.tobytes(garbage=4, deflate=True) if changed else pdf_bytes
 
 def compress_pdfs(input_files, output_dir, compression_level="Média", max_dpi=0,
                   progress_callback=None, cancel_event=None):
-    """max_dpi > 0 also re-samples images shown above that resolution. 300 dpi suits
-    professional printing, 150 dpi an office laser printer, 96 dpi screen reading."""
+    """Comprime arquivos PDF ajustando fluxo de dados e imagens."""
     quality_map = {
         "Muito Alta": 30,
         "Alta": 50,
@@ -220,8 +208,6 @@ def compress_pdfs(input_files, output_dir, compression_level="Média", max_dpi=0
             if max_dpi:
                 source = _downsample_images(source, max_dpi, cancel_event)
 
-            # clone_from keeps metadata, bookmarks and links; compress_content_streams
-            # only works on pages that already belong to a PdfWriter.
             writer = PdfWriter(clone_from=io.BytesIO(source))
 
             for page in writer.pages:
@@ -233,15 +219,12 @@ def compress_pdfs(input_files, output_dir, compression_level="Média", max_dpi=0
                     try:
                         obj = img.indirect_reference.get_object()
                         pil = img.image
-                        # JPEG has no alpha channel: replacing a masked image would turn
-                        # its transparent areas black.
                         if "/SMask" in obj or "/Mask" in obj or pil.mode in ("RGBA", "LA", "PA"):
-                            continue
+                            continue  # ignora imagens com transparência
                         if pil.mode not in ("RGB", "L"):
                             pil = pil.convert("RGB")
                         buf = io.BytesIO()
                         pil.save(buf, format="JPEG", quality=img_quality, optimize=True)
-                        # Re-encoding an already compressed JPEG at higher quality makes it bigger
                         if len(buf.getvalue()) < len(img.data):
                             img.replace(pil, quality=img_quality, optimize=True)
                     except Exception:
@@ -254,7 +237,6 @@ def compress_pdfs(input_files, output_dir, compression_level="Média", max_dpi=0
             if len(buf.getvalue()) < original_size:
                 out_file.write_bytes(buf.getvalue())
             else:
-                # Nothing left to gain: never hand back a file bigger than the original
                 shutil.copyfile(pdf, out_file)
             size_before += original_size
             size_after += out_file.stat().st_size
@@ -272,10 +254,9 @@ def compress_pdfs(input_files, output_dir, compression_level="Média", max_dpi=0
     return errors
 
 def images_to_pdf(input_files, output_file, progress_callback=None, cancel_event=None):
+    """Converte lista de imagens em um arquivo PDF."""
     errors = []
     total = len(input_files)
-    # Pages are added one image at a time, so only one decoded image is in memory at once
-    # (a batch of phone photos would otherwise need several GB of RAM).
     with pymupdf.open() as out_doc:
         for i, img_path in enumerate(input_files):
             _check_cancel(cancel_event)
@@ -283,9 +264,7 @@ def images_to_pdf(input_files, output_file, progress_callback=None, cancel_event
                 progress_callback(i, total, f"Processando imagem {i+1} de {total}...")
             try:
                 with Image.open(img_path) as src:
-                    # Phone photos store orientation in EXIF; apply it or pages come out rotated.
-                    # exif_transpose returns a loaded copy, so the file handle can be closed.
-                    img = ImageOps.exif_transpose(src)
+                    img = ImageOps.exif_transpose(src)  # corrige orientação EXIF
                 if img.mode in ("RGBA", "P", "LA", "PA"):
                     img = img.convert("RGBA")
                     bg = Image.new("RGB", img.size, (255, 255, 255))
@@ -296,7 +275,6 @@ def images_to_pdf(input_files, output_file, progress_callback=None, cancel_event
 
                 buf = io.BytesIO()
                 img.save(buf, format="JPEG")
-                # 150 dpi: same page size the previous Pillow-based export produced
                 page = out_doc.new_page(width=img.width * 72 / 150, height=img.height * 72 / 150)
                 page.insert_image(page.rect, stream=buf.getvalue())
             except Exception as e:
@@ -327,8 +305,7 @@ def _is_page_colored(page: pymupdf.Page) -> bool:
         return True
 
 def _fit_centered(src_rect, box):
-    """Largest rect with src_rect's proportions that fits inside box, centered.
-    Without this, show_pdf_page stretches the content to fill the box and distorts it."""
+    """Ajusta e centraliza o retângulo proporcionalmente dentro da caixa."""
     scale = min(box.width / src_rect.width, box.height / src_rect.height)
     w, h = src_rect.width * scale, src_rect.height * scale
     x = box.x0 + (box.width - w) / 2
@@ -336,12 +313,11 @@ def _fit_centered(src_rect, box):
     return pymupdf.Rect(x, y, x + w, y + h)
 
 def margin_box(src_rect, p_num, margins_pt, page_size="original", mirror=False):
-    """Sheet size and the rectangle the content goes into, for one page.
-    Shared with the preview so what the user sees is what gets written."""
+    """Calcula as dimensões da folha e a área útil delimitada pelas margens."""
     A4_W, A4_H = 595.0, 842.0
     ml, mr, mt, mb = margins_pt
     if mirror and p_num % 2:
-        ml, mr = mr, ml # even pages (1-based) are the back of a leaf: the gutter flips side
+        ml, mr = mr, ml  # espelha margens em páginas pares
 
     if page_size == "a4":
         w, h = (A4_H, A4_W) if src_rect.width > src_rect.height else (A4_W, A4_H)
@@ -356,15 +332,7 @@ def margin_box(src_rect, p_num, margins_pt, page_size="original", mirror=False):
 def add_margins(input_files, output_dir, margin_left_mm=15, margin_right_mm=15,
                 margin_top_mm=5, margin_bottom_mm=5, grayscale=False, page_size="original",
                 mirror_margins=False, progress_callback=None, cancel_event=None):
-    """Adds white borders around the content of every page.
-
-    page_size: "original" keeps each page's own dimensions; "a4" fits everything to A4,
-    following the source orientation (a landscape page becomes landscape A4).
-    mirror_margins: for double-sided binding, the left margin is the gutter and swaps to
-    the right on even pages, so the bound edge lines up once the sheets are stacked.
-    grayscale: rasterizes colored pages to grayscale JPEG. Off by default because it
-    drops color and turns vector text into an image; kept for print workflows that need it.
-    """
+    """Adiciona margens às páginas dos arquivos PDF."""
     MM_TO_PT = 2.83465
     margins_pt = (margin_left_mm * MM_TO_PT, margin_right_mm * MM_TO_PT,
                   margin_top_mm * MM_TO_PT, margin_bottom_mm * MM_TO_PT)
@@ -396,7 +364,6 @@ def add_margins(input_files, output_dir, margin_left_mm=15, margin_right_mm=15,
                     else:
                         out_page.show_pdf_page(_fit_centered(src, box), doc, p_num)
 
-                    # Long documents would otherwise show no movement until the file is done
                     if progress_callback and n_pages > 20 and p_num % 10 == 9:
                         progress_callback(i, total, f"Adicionando margens em {pdf.name} ({p_num + 1}/{n_pages})...")
 
@@ -410,9 +377,7 @@ def add_margins(input_files, output_dir, margin_left_mm=15, margin_right_mm=15,
     return errors
 
 def rotate_pdf_visual(input_file, output_dir, rotations_dict):
-    """Returns the path of the file written."""
     pdf = Path(input_file)
-    # clone_from keeps bookmarks and links, which add_page() would drop
     writer = PdfWriter(clone_from=str(pdf))
     for i, page in enumerate(writer.pages):
         angle = rotations_dict.get(i, 0)
@@ -425,8 +390,6 @@ def rotate_pdf_visual(input_file, output_dir, rotations_dict):
     return out_file
 
 def crop_pdf_visual(input_file, output_dir, crop_boxes_dict):
-    """crop_boxes_dict maps page index to (x0, y0, x1, y1) relative (0..1) to the page as displayed.
-    Returns the path of the file written."""
     pdf = Path(input_file)
     with pymupdf.open(str(pdf)) as doc:
         for i, box in crop_boxes_dict.items():
@@ -437,8 +400,7 @@ def crop_pdf_visual(input_file, output_dir, crop_boxes_dict):
                 w = page.rect.width
                 h = page.rect.height
 
-                # Coordinates are relative to what the user saw (rotated, already-cropped page);
-                # set_cropbox expects unrotated coordinates relative to the mediabox.
+                # Converte coordenadas relativas para a orientação original da página
                 rect = pymupdf.Rect(rel_x0 * w, rel_y0 * h, rel_x1 * w, rel_y1 * h) * page.derotation_matrix
                 rect = rect + (page.cropbox.x0, page.cropbox.y0, page.cropbox.x0, page.cropbox.y0)
                 page.set_cropbox(rect & page.mediabox)
@@ -448,6 +410,7 @@ def crop_pdf_visual(input_file, output_dir, crop_boxes_dict):
     return out_file
 
 def pdf_to_images(input_files, output_dir, progress_callback=None, cancel_event=None):
+    """Converte páginas de PDF em imagens PNG."""
     errors = []
     total = len(input_files)
     for i, (pdf_path, stem) in enumerate(zip(input_files, _output_stems(input_files))):
@@ -472,8 +435,7 @@ def pdf_to_images(input_files, output_dir, progress_callback=None, cancel_event=
     return errors
 
 def parse_page_ranges(spec, n_pages):
-    """Turns "3-7, 12, 20-" into zero-based page indices, keeping the order typed so the
-    same function also reorders pages. Raises ValueError with a user-facing message."""
+    """Converte especificação de páginas (ex.: '1-3, 5, 8-') em índices de páginas."""
     if not spec or not spec.strip():
         raise ValueError("Informe as páginas (ex.: 1-3, 5, 8-).")
 
@@ -487,7 +449,7 @@ def parse_page_ranges(spec, n_pages):
             start = int(m.group(1)) if m.group(1) else 1
             end = int(m.group(2)) if m.group(2) else n_pages
             if start > end:
-                start, end = end, start # "7-3" is a typo, not an error worth blocking on
+                start, end = end, start
             if start < 1 or end > n_pages:
                 raise ValueError(f"Intervalo '{part}' fora do documento, que tem {n_pages} páginas.")
             pages.extend(range(start - 1, end))
@@ -505,8 +467,7 @@ def parse_page_ranges(spec, n_pages):
 
 def select_pages(input_files, output_dir, pages_spec="", mode="extract",
                  progress_callback=None, cancel_event=None):
-    """mode "extract" keeps the listed pages in the order typed, so it doubles as reordering;
-    "remove" keeps everything that was not listed, in the original order."""
+    """Extrai ou remove as páginas especificadas dos arquivos PDF."""
     suffix = "paginas" if mode == "extract" else "sem_paginas"
     errors = []
     total = len(input_files)
@@ -543,25 +504,18 @@ def select_pages(input_files, output_dir, pages_spec="", mode="extract",
     return errors
 
 def _booklet_order(n_sheets_pages):
-    """Page order for a centre-stapled booklet: each sheet side holds two pages, and the
-    reader gets 1,2,3... only after folding. Blank slots are None."""
+    """Calcula a ordem das páginas para imposição em livreto."""
     order = []
     left, right = n_sheets_pages, 1
     while right < left:
-        order.extend([left, right, right + 1, left - 1]) # front: last,first | back: second,second-to-last
+        order.extend([left, right, right + 1, left - 1])
         left -= 2
         right += 2
     return order
 
 def impose_pdfs(input_files, output_dir, layout="2up", sheet_size="a4",
                 progress_callback=None, cancel_event=None):
-    """Places two source pages side by side on each sheet.
-
-    layout "2up" keeps the reading order (1,2 | 3,4); "booklet" reorders pages so that
-    printing double-sided, folding and stapling in the middle produces a readable booklet.
-    sheet_size "a4" uses landscape A4; "auto" makes each sheet twice the width of the
-    first page, keeping its height.
-    """
+    """Monta 2 páginas por folha ou organiza em livreto."""
     A4_W, A4_H = 595.0, 842.0
     suffix = "livreto" if layout == "booklet" else "2em1"
     errors = []
@@ -579,14 +533,14 @@ def impose_pdfs(input_files, output_dir, layout="2up", sheet_size="a4",
                     raise ValueError("o documento não tem páginas")
 
                 if layout == "booklet":
-                    padded = n + (-n % 4) # a booklet always needs a multiple of four
+                    padded = n + (-n % 4)  # ajusta para múltiplo de 4
                     slots = [p if p <= n else None for p in _booklet_order(padded)]
                 else:
                     slots = list(range(1, n + 1)) + ([None] if n % 2 else [])
 
                 first = doc[0].rect
                 if sheet_size == "a4":
-                    sheet_w, sheet_h = A4_H, A4_W # landscape A4 holds two portrait pages
+                    sheet_w, sheet_h = A4_H, A4_W
                 else:
                     sheet_w, sheet_h = first.width * 2, first.height
 
@@ -597,7 +551,7 @@ def impose_pdfs(input_files, output_dir, layout="2up", sheet_size="a4",
                               pymupdf.Rect(sheet_w / 2, 0, sheet_w, sheet_h))
                     for half, page_no in zip(halves, slots[k:k + 2]):
                         if page_no is None:
-                            continue # blank slot: booklets need the padding to fold right
+                            continue
                         src = doc[page_no - 1]
                         sheet.show_pdf_page(_fit_centered(src.rect, half), doc, page_no - 1)
 
@@ -618,7 +572,7 @@ def _short_pages(pages, limit=8):
     return f"pág. {shown}" + (f" e mais {len(pages) - limit}" if len(pages) > limit else "")
 
 def _page_content_bbox(page):
-    """Union of everything that actually prints on the page, or None for a blank page."""
+    """Calcula a caixa delimitadora de todo o conteúdo da página."""
     box = None
     for block in page.get_text("blocks"):
         r = pymupdf.Rect(block[:4])
@@ -634,8 +588,7 @@ def _page_content_bbox(page):
 
 def preflight_check(input_files, output_dir, min_dpi=150, safe_margin_mm=5,
                     progress_callback=None, cancel_event=None):
-    """Writes a plain-text report listing what would likely go wrong at the printer.
-    Reads only: the PDFs are never modified."""
+    """Gera relatório de verificação pré-impressão dos PDFs."""
     MM_TO_PT = 2.83465
     safe_pt = safe_margin_mm * MM_TO_PT
     errors = []
@@ -677,7 +630,7 @@ def preflight_check(input_files, output_dir, min_dpi=150, safe_margin_mm=5,
                                     low_dpi.append((n, round(dpi)))
 
                     for font in page.get_fonts(full=True):
-                        if font[1] == "n/a":  # no embedded file: the printer substitutes it
+                        if font[1] == "n/a":  # fonte não embutida
                             loose_fonts.add(font[3])
 
                     content = _page_content_bbox(page)
@@ -730,8 +683,7 @@ def preflight_check(input_files, output_dir, min_dpi=150, safe_margin_mm=5,
 
 def protect_pdfs(input_files, output_dir, password="", allow_printing=True, allow_copy=True,
                  progress_callback=None, cancel_event=None):
-    """Encrypts with AES-256. The password is required to open the file; the permission
-    flags only hold in readers that choose to honour them."""
+    """Protege arquivos PDF com senha e permissões de acesso."""
     if not password:
         raise ValueError("Informe uma senha.")
 
@@ -765,8 +717,7 @@ def protect_pdfs(input_files, output_dir, password="", allow_printing=True, allo
     return errors
 
 def unlock_pdfs(input_files, output_dir, password="", progress_callback=None, cancel_event=None):
-    """Removes the password from PDFs, given the password that opens them. Files that are
-    not encrypted pass through unchanged, so a mixed batch doesn't fail."""
+    """Remove a proteção por senha de arquivos PDF."""
     errors = []
     total = len(input_files)
     for i, (pdf_path, stem) in enumerate(zip(input_files, _output_stems(input_files))):
@@ -793,8 +744,7 @@ def unlock_pdfs(input_files, output_dir, password="", progress_callback=None, ca
     return errors
 
 def clean_metadata(input_files, output_dir, progress_callback=None, cancel_event=None):
-    """Strips author, producer, dates and the XMP block, which is where editing history and
-    the original author's name usually survive a copy-paste."""
+    """Remove metadados dos arquivos PDF."""
     errors = []
     total = len(input_files)
     for i, (pdf_path, stem) in enumerate(zip(input_files, _output_stems(input_files))):
@@ -819,8 +769,7 @@ def clean_metadata(input_files, output_dir, progress_callback=None, cancel_event
     return errors
 
 def grayscale_pdfs(input_files, output_dir, dpi=200, progress_callback=None, cancel_event=None):
-    """Converts colored pages to grayscale to save toner. Pages that are already black and
-    white are copied untouched, so text-only documents keep their searchable text."""
+    """Converte páginas coloridas para escala de cinza."""
     errors = []
     total = len(input_files)
     for i, (pdf_path, stem) in enumerate(zip(input_files, _output_stems(input_files))):
@@ -862,7 +811,7 @@ NUMBER_POSITIONS = ("inferior-centro", "inferior-direita", "inferior-esquerda",
                     "superior-centro", "superior-direita", "superior-esquerda")
 
 def _number_point(page_rect, position, text_width, font_size, margin_pt):
-    """Baseline point for the page number, given a corner or centre position."""
+    """Calcula a posição do número da página conforme o alinhamento escolhido."""
     top = position.startswith("superior")
     y = page_rect.y0 + margin_pt + font_size if top else page_rect.y1 - margin_pt
 
@@ -877,12 +826,7 @@ def _number_point(page_rect, position, text_width, font_size, margin_pt):
 def number_pages(input_files, output_dir, number_format="{n}", position="inferior-centro",
                  start_at=1, first_page=1, font_size=10, margin_mm=10,
                  progress_callback=None, cancel_event=None):
-    """Stamps page numbers on each page.
-
-    number_format takes {n} (the printed number) and {total} (the last number printed).
-    start_at is the number given to the first numbered page; first_page is which physical
-    page starts the numbering, so a cover can be skipped and still not be counted.
-    """
+    """Insere numeração de páginas nos arquivos PDF."""
     MM_TO_PT = 2.83465
     margin_pt = margin_mm * MM_TO_PT
     errors = []
@@ -930,9 +874,7 @@ WATERMARK_COLORS = {"Cinza": (0.5, 0.5, 0.5), "Vermelho": (0.8, 0.1, 0.1), "Azul
 def watermark_pdfs(input_files, output_dir, text="CONFIDENCIAL", layout="diagonal",
                    font_size=54, opacity=0.15, color="Cinza",
                    progress_callback=None, cancel_event=None):
-    """Stamps text over every page. "diagonal" runs corner to corner across the middle of
-    the page; "rodape" sits along the bottom. The text goes on top of the content, so a low
-    opacity is what keeps the document readable."""
+    """Aplica marca d'água de texto nas páginas dos PDFs."""
     if not text or not text.strip():
         raise ValueError("Informe o texto da marca d'água.")
     text = text.strip()
@@ -964,7 +906,7 @@ def watermark_pdfs(input_files, output_dir, text="CONFIDENCIAL", layout="diagona
                         writer.append(point, text, fontsize=size, font=pymupdf.Font("hebo"))
                         writer.write_text(page, color=rgb, opacity=opacity)
                     else:
-                        # Shrink until the rotated text fits the page diagonal
+                        # Reduz tamanho da fonte se ultrapassar a diagonal
                         size = font_size
                         diagonal = (rect.width ** 2 + rect.height ** 2) ** 0.5
                         while size > 8 and pymupdf.get_text_length(text, fontname="hebo", fontsize=size) > diagonal * 0.8:
@@ -976,8 +918,7 @@ def watermark_pdfs(input_files, output_dir, text="CONFIDENCIAL", layout="diagona
 
                         writer = pymupdf.TextWriter(rect)
                         writer.append(start, text, fontsize=size, font=pymupdf.Font("hebo"))
-                        # morph rotates around the centre; insert_text only does right angles.
-                        # Positive angle runs bottom-left to top-right, as watermarks usually do.
+                        # Rotaciona o texto ao longo da diagonal
                         angle = math.degrees(math.atan2(rect.height, rect.width))
                         writer.write_text(page, color=rgb, opacity=opacity,
                                           morph=(centre, pymupdf.Matrix(angle)))

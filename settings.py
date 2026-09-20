@@ -1,4 +1,4 @@
-"""Small JSON-backed store for user preferences (theme, folders, tool options)."""
+"""Armazenamento de preferências do usuário em JSON."""
 import json
 import os
 from pathlib import Path
@@ -15,7 +15,7 @@ def _load():
             if not isinstance(_data, dict):
                 _data = {}
         except (OSError, ValueError):
-            _data = {} # missing or corrupted file: start from defaults
+            _data = {}
     return _data
 
 def get(key, default=None):
@@ -27,6 +27,6 @@ def set(key, value):
         SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
         tmp = SETTINGS_PATH.with_suffix(".tmp")
         tmp.write_text(json.dumps(_data, ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp.replace(SETTINGS_PATH) # atomic, so a crash mid-write can't corrupt the file
+        tmp.replace(SETTINGS_PATH)  # escrita atômica
     except OSError:
-        pass # preferences are a convenience; never break the app over them
+        pass

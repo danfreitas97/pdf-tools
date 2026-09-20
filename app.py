@@ -16,7 +16,6 @@ from PIL import Image
 import pymupdf
 from tkinterdnd2 import TkinterDnD, DND_FILES
 
-# Import our backend
 import pdf_tools
 import settings
 from pdf_tools import format_size
@@ -34,7 +33,7 @@ DANGER = ("#D9534F", "#C9302C")
 DANGER_HOVER = ("#C9302C", "#A52A2A")
 
 def parse_number(text, field_name, default):
-    """Accepts both '2.5' and '2,5'; raises ValueError with a user-facing message."""
+    """Converte texto para número aceitando ponto ou vírgula como separador decimal."""
     text = text.strip().replace(",", ".")
     if not text:
         return default
@@ -42,7 +41,7 @@ def parse_number(text, field_name, default):
         value = float(text)
     except ValueError:
         raise ValueError(f"Valor inválido em '{field_name}': {text}")
-    if not math.isfinite(value): # float() also accepts "nan" and "inf"
+    if not math.isfinite(value):
         raise ValueError(f"Valor inválido em '{field_name}': {text}")
     if value < 0:
         raise ValueError(f"'{field_name}' não pode ser negativo.")
@@ -52,7 +51,7 @@ def format_number(value):
     return f"{value:g}".replace(".", ",")
 
 def shorten_path(path, max_chars=60):
-    """'C:\\Users\\...\\docs\\pasta' style: keeps the drive and the last folders readable."""
+    """Encurta o caminho do arquivo para exibição legível."""
     path = str(path)
     if len(path) <= max_chars:
         return path
@@ -65,11 +64,11 @@ def shorten_path(path, max_chars=60):
     return str(Path(parts[0]) / "…" / tail)
 
 def natural_key(text):
-    """Sort key where 'pagina2' comes before 'pagina10'."""
+    """Chave de ordenação natural para strings com números."""
     return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", text)]
 
 def open_in_explorer(path):
-    """Opens a folder, or the folder containing a file with the file selected."""
+    """Abre a pasta ou o arquivo no gerenciador de arquivos do sistema."""
     path = Path(path)
     try:
         if sys.platform == "win32":
@@ -83,7 +82,7 @@ def open_in_explorer(path):
         messagebox.showerror("Erro", f"Não foi possível abrir a pasta:\n\n{e}")
 
 def apply_treeview_style(root):
-    """ttk widgets don't follow CustomTkinter's theme, so the file table is styled by hand."""
+    """Aplica estilo visual ao Treeview conforme o tema ativo."""
     dark = ctk.get_appearance_mode() == "Dark"
     bg = LIST_BG[1] if dark else LIST_BG[0]
     fg, head_bg, selected = ("#DCE4EE", "#333333", "#1F6AA5") if dark else ("#1A1A1A", "#D6D6D6", "#3B8ED0")
@@ -92,7 +91,7 @@ def apply_treeview_style(root):
                             tkfont.Font(root=root, family="Segoe UI", size=10, weight="bold"))
     font, head_font = root._tree_fonts
     style = ttk.Style(root)
-    style.theme_use("default") # the native Windows theme ignores custom colors
+    style.theme_use("default")
     style.configure("Files.Treeview", background=bg, fieldbackground=bg, foreground=fg, font=font,
                     rowheight=font.metrics("linespace") + 10, borderwidth=0)
     style.map("Files.Treeview", background=[("selected", selected)], foreground=[("selected", "#FFFFFF")])
@@ -101,8 +100,7 @@ def apply_treeview_style(root):
     style.layout("Files.Treeview", [("Treeview.treearea", {"sticky": "nswe"})])
 
 class FileList(ctk.CTkFrame):
-    """Table of input files showing pages (or image size) and file size, with drag-to-reorder,
-    move up/down, sort and remove."""
+    """Tabela de arquivos selecionados com ordenação e gerenciamento."""
 
     def __init__(self, master, app, is_image_list, single_file, on_change):
         super().__init__(master, fg_color="transparent")
@@ -110,7 +108,7 @@ class FileList(ctk.CTkFrame):
         self.is_image_list = is_image_list
         self.single_file = single_file
         self.on_change = on_change
-        self.info = {} # path -> dict(label, size, valid, pages)
+        self.info = {}
         self.drag_item = None
         self.drag_moved = False
 
@@ -140,7 +138,6 @@ class FileList(ctk.CTkFrame):
         hint = "Arraste um arquivo para cá" if single_file else "Arraste arquivos ou pastas para cá"
         self.lbl_empty = ctk.CTkLabel(self.tree_frame, text=f"{hint}\nou use os botões acima", text_color="gray", fg_color=LIST_BG)
 
-        # Actions row
         actions = ctk.CTkFrame(self, fg_color="transparent")
         actions.grid(row=1, column=0, sticky="ew", pady=(6, 0))
         if not single_file:
@@ -210,7 +207,6 @@ class FileList(ctk.CTkFrame):
         for item in sorted(selected, key=self.tree.index, reverse=delta > 0):
             new_index = self.tree.index(item) + delta
             children = self.tree.get_children()
-            # Selected items move as a block: stop at the edges and never jump over each other
             if 0 <= new_index < len(children) and children[new_index] not in selected:
                 self.tree.move(item, "", new_index)
         self.tree.see(sorted(selected, key=self.tree.index)[0 if delta < 0 else -1])
@@ -249,7 +245,7 @@ class FileList(ctk.CTkFrame):
                 pass
 
     def load_info(self, paths):
-        """Reads page counts / image sizes in the background so large batches don't freeze the UI."""
+        """Lê informações dos arquivos em segundo plano."""
         if not paths:
             return
         def work():
@@ -265,7 +261,7 @@ class FileList(ctk.CTkFrame):
             if self.is_image_list:
                 with Image.open(path) as im:
                     w, h = im.size
-                    if im.getexif().get(0x0112) in (5, 6, 7, 8): # EXIF orientation swaps width/height
+                    if im.getexif().get(0x0112) in (5, 6, 7, 8):  # inverte largura e altura conforme orientação EXIF
                         w, h = h, w
                 info.update(label=f"{w} × {h}", valid=True)
             else:
@@ -296,8 +292,7 @@ class FileList(ctk.CTkFrame):
         return self.info[path]["pages"]
 
     def invalid_files(self, allow_protected=False):
-        """Password-protected files count as invalid everywhere except in the tool whose
-        whole job is to remove that password."""
+        """Retorna os arquivos inválidos para processamento."""
         return [f for f in self.files if f in self.info and not self.info[f]["valid"]
                 and not (allow_protected and self.info[f].get("protected"))]
 
@@ -347,11 +342,9 @@ class ToolView(ctk.CTkFrame):
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(2, weight=1)
 
-        # Header
         self.lbl_title = ctk.CTkLabel(self, text=self.tool_name, font=ctk.CTkFont(size=24, weight="bold"))
         self.lbl_title.grid(row=0, column=0, pady=(20, 10), padx=20, sticky="w")
 
-        # Files Selection
         self.btn_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.btn_frame.grid(row=1, column=0, padx=20, sticky="ew")
 
@@ -369,14 +362,12 @@ class ToolView(ctk.CTkFrame):
         self.file_list = FileList(self, app, self.exts == IMAGE_EXTS, self.single_file, on_change=self.update_output_label)
         self.file_list.grid(row=2, column=0, padx=20, pady=10, sticky="nsew")
 
-        # Drag and drop: the whole tool view accepts files and folders
         for widget in (self, self.file_list.tree):
             widget.drop_target_register(DND_FILES)
             widget.dnd_bind("<<DropEnter>>", self.on_drop_enter)
             widget.dnd_bind("<<DropLeave>>", self.on_drop_leave)
             widget.dnd_bind("<<Drop>>", self.on_drop)
 
-        # Output Dir
         self.out_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.out_frame.grid(row=3, column=0, padx=20, pady=(0, 5), sticky="ew")
 
@@ -389,7 +380,6 @@ class ToolView(ctk.CTkFrame):
         self.lbl_out_dir = ctk.CTkLabel(self.out_frame, text="", anchor="w")
         self.lbl_out_dir.pack(side="left", padx=10, fill="x", expand=True)
 
-        # Extra options (if any)
         self.extra_options_frame = None
         if extra_options_widget:
             self.extra_options_frame = extra_options_widget(self)
@@ -399,15 +389,13 @@ class ToolView(ctk.CTkFrame):
                 try:
                     self.extra_options_frame.load_values(saved_options)
                 except Exception:
-                    pass # stale or hand-edited settings: keep the defaults
+                    pass
 
-        # Process Button
         self.process_text = "Abrir Editor Visual" if self.single_file else "Processar"
         self.btn_process = ctk.CTkButton(self, text=self.process_text, font=ctk.CTkFont(size=16, weight="bold"), height=40, width=180, command=self.process)
         self.btn_process.grid(row=5, column=0, pady=10)
         self.process_colors = (self.btn_process.cget("fg_color"), self.btn_process.cget("hover_color"))
 
-        # Progress
         if not self.single_file:
             self.progressbar = ctk.CTkProgressBar(self)
             self.progressbar.grid(row=6, column=0, padx=20, pady=5, sticky="ew")
@@ -444,7 +432,7 @@ class ToolView(ctk.CTkFrame):
             self.add_paths([folder])
 
     def add_paths(self, paths):
-        """Adds files and/or folders (searched recursively), keeping only compatible extensions."""
+        """Adiciona arquivos e pastas compatíveis à lista."""
         new_files = []
         ignored = 0
         for raw in paths:
@@ -478,7 +466,6 @@ class ToolView(ctk.CTkFrame):
 
     def on_drop(self, event):
         self.file_list.set_drop_highlight(False)
-        # splitlist handles Tcl's {braces} around paths that contain spaces
         self.add_paths(self.tk.splitlist(event.data))
         return event.action
 
@@ -507,7 +494,6 @@ class ToolView(ctk.CTkFrame):
         self.update_output_label()
 
     def update_progress(self, current, total, message):
-        # Called from the worker thread: hand the UI update to the main thread
         def update():
             self.progressbar.set(current / total if total > 0 else 0)
             self.lbl_status.configure(text=message)
@@ -545,7 +531,6 @@ class ToolView(ctk.CTkFrame):
             self.app.open_visual_editor(self.tool_name, files[0], self.output_dir)
             return
 
-        # Gather extra kwargs
         kwargs = {}
         if hasattr(self.extra_options_frame, "get_values"):
             try:
@@ -576,7 +561,7 @@ class ToolView(ctk.CTkFrame):
             except pdf_tools.Cancelled:
                 self.app.post(self.on_cancelled)
             except Exception as e:
-                msg = str(e) # 'e' is unbound once the except block ends, so capture it now
+                msg = str(e)
                 self.app.post(lambda: self.on_failed(msg))
 
         threading.Thread(target=worker, daemon=True).start()
@@ -653,7 +638,6 @@ class SplitOptions(ctk.CTkFrame):
 
         self.mode_var = ctk.StringVar(value="half")
 
-        # Radio buttons
         self.rb_half = ctk.CTkRadioButton(self, text="50/50 (Metade)", variable=self.mode_var, value="half", command=self.on_mode_change)
         self.rb_half.grid(row=0, column=0, padx=10, pady=5, sticky="w")
 
@@ -663,7 +647,6 @@ class SplitOptions(ctk.CTkFrame):
         self.rb_size = ctk.CTkRadioButton(self, text="Por Tamanho (MB)", variable=self.mode_var, value="size", command=self.on_mode_change)
         self.rb_size.grid(row=0, column=2, padx=10, pady=5, sticky="w")
 
-        # Parameter entry
         self.param_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.param_frame.grid(row=0, column=3, padx=10, pady=0, sticky="w")
 
@@ -795,8 +778,6 @@ class MarginsOptions(ctk.CTkFrame):
         self.btn_preview.pack(side="left", padx=(20, 5))
 
     def on_mirror_change(self):
-        """With mirrored margins the left/right fields stop meaning left and right: they
-        become the inner (gutter) and outer edges, which swap on every other page."""
         mirrored = self.mirror_var.get()
         self.labels["margin_left_mm"].configure(text="Interna:" if mirrored else "Esquerda:")
         self.labels["margin_right_mm"].configure(text="Externa:" if mirrored else "Direita:")
@@ -821,11 +802,8 @@ class MarginsOptions(ctk.CTkFrame):
     def get_values(self):
         values = {}
         for label, key, default in self.FIELDS:
-            # parse_number already rejects negatives and non-numbers
             values[key] = parse_number(self.entries[key].get(), f"Margem {label}", default)
 
-        # Only A4 has known dimensions here; "Manter original" is checked per page at run time,
-        # since each file may have a different page size.
         if self._page_size() == "a4":
             if values["margin_left_mm"] + values["margin_right_mm"] >= self.A4_W_MM or                values["margin_top_mm"] + values["margin_bottom_mm"] >= self.A4_H_MM:
                 raise ValueError("As margens são grandes demais para uma página A4 (210 x 297 mm).")
@@ -836,7 +814,7 @@ class MarginsOptions(ctk.CTkFrame):
         return values
 
     def load_values(self, values):
-        # Settings saved before margins were split into four sides used one value per axis.
+        # compatibilidade com configurações anteriores
         legacy = {"margin_left_mm": "margin_x_mm", "margin_right_mm": "margin_x_mm",
                   "margin_top_mm": "margin_y_mm", "margin_bottom_mm": "margin_y_mm"}
         for _, key, _ in self.FIELDS:
@@ -881,7 +859,6 @@ class PagesOptions(ctk.CTkFrame):
     def load_values(self, values):
         if values.get("mode") in [v for _, v in self.MODES]:
             self.mode_var.set(values["mode"])
-        # pages_spec is deliberately not restored: it belongs to one specific document
 
 
 class ImposeOptions(ctk.CTkFrame):
@@ -996,7 +973,7 @@ class ProtectOptions(ctk.CTkFrame):
             raise ValueError("As duas senhas não são iguais.")
         return {"password": pw, "allow_printing": self.print_var.get(), "allow_copy": self.copy_var.get()}
 
-    # No load_values on purpose: a password must never be written to the settings file.
+    # senha não é salva nas configurações por segurança
 
 
 class UnlockOptions(ctk.CTkFrame):
@@ -1044,8 +1021,7 @@ class GrayscaleOptions(ctk.CTkFrame):
 
 
 class MergeOptions(OutputFilenameOptions):
-    """Same as the plain output name, plus the per-file bookmarks. Kept separate from
-    OutputFilenameOptions because images_to_pdf shares that one and takes no bookmarks."""
+    """Opções para o arquivo mesclado com suporte a marcadores."""
 
     def __init__(self, master):
         super().__init__(master)
@@ -1212,8 +1188,7 @@ class WatermarkOptions(ctk.CTkFrame):
 
 
 class MarginPreview(ctk.CTkToplevel):
-    """Shows what the margins will do to a real page, using the same geometry the export
-    uses, so the preview can't drift from the result."""
+    """Janela de pré-visualização das margens aplicadas."""
     MAX_SIDE = 560
 
     def __init__(self, master, pdf_path, values):
@@ -1290,7 +1265,6 @@ class MarginPreview(ctk.CTkToplevel):
         sheet_w, sheet_h = int(w * scale), int(h * scale)
         content = pdf_tools._fit_centered(src, box)
 
-        # Renders the page itself at the size it will occupy inside the margins
         zoom = (content.width * scale) / src.width
         pix = self.doc[self.page].get_pixmap(matrix=pymupdf.Matrix(zoom, zoom))
         img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
@@ -1298,7 +1272,7 @@ class MarginPreview(ctk.CTkToplevel):
         sheet = Image.new("RGB", (sheet_w, sheet_h), "white")
         sheet.paste(img, (int(content.x0 * scale), int(content.y0 * scale)))
         buf = io.BytesIO()
-        sheet.save(buf, format="PPM") # same path the visual editor uses, no ImageTk needed
+        sheet.save(buf, format="PPM")
         self.photo = tk.PhotoImage(master=self, data=buf.getvalue())
 
         self.canvas.delete("all")
@@ -1307,12 +1281,11 @@ class MarginPreview(ctk.CTkToplevel):
         x, y = (cw - sheet_w) // 2, (ch - sheet_h) // 2
         dark = ctk.get_appearance_mode() == "Dark"
         self.canvas.configure(bg="#2B2B2B" if dark else "#C8C8C8")
-        # Tk canvas colors have no alpha channel: a solid tone, as in the visual editor
         self.canvas.create_rectangle(x + 4, y + 4, x + sheet_w + 4, y + sheet_h + 4,
                                      fill="#0A0A0A" if dark else "#A8A8A8", outline="")
         self.canvas.create_image(x, y, anchor="nw", image=self.photo)
         self.canvas.create_rectangle(x, y, x + sheet_w, y + sheet_h, outline="#888")
-        # Dashed outline of the area the content was fitted into
+        # linha tracejada da área útil
         self.canvas.create_rectangle(x + content.x0 * scale, y + content.y0 * scale,
                                      x + content.x1 * scale, y + content.y1 * scale,
                                      outline="#3B8ED0", dash=(4, 3))
@@ -1341,8 +1314,7 @@ class MarginPreview(ctk.CTkToplevel):
 
 
 class VisualEditor(ctk.CTkFrame):
-    """Single-page view with zoom and a thumbnail strip. Pages are rendered on demand,
-    so memory use doesn't grow with the size of the PDF."""
+    """Editor visual de páginas para corte e rotação."""
     ZOOM_STEPS = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0]
     MIN_CROP_PX = 5
 
@@ -1357,7 +1329,6 @@ class VisualEditor(ctk.CTkFrame):
         self.resize_job = None
         self.bound_keys = []
 
-        # Opened from memory, so the file on disk is never locked while the editor is open
         self.doc = pymupdf.open(stream=Path(input_file).read_bytes(), filetype="pdf")
         if self.doc.needs_pass:
             raise ValueError("O PDF está protegido por senha.")
@@ -1365,22 +1336,22 @@ class VisualEditor(ctk.CTkFrame):
             raise ValueError("O PDF não possui páginas.")
 
         n = self.page_count = self.doc.page_count
-        self.rotations = [0] * n   # extra clockwise rotation chosen by the user
-        self.crops = [None] * n    # (x0, y0, x1, y1) relative to the displayed page
+        self.rotations = [0] * n
+        self.crops = [None] * n
         self.thumb_photos = [None] * n
         self.thumb_rotations = [None] * n
         self.thumb_geometry = [None] * n
         self.thumb_cursor = 0
         self.current = 0
-        self.zoom = None           # None = fit to window
+        self.zoom = None
         self.effective_zoom = 1.0
         self.page_photo = None
-        self.image_box = None      # (x, y, width, height) of the page image on the canvas
+        self.image_box = None
         self.drag_start = None
         self.saving = False
 
         scaling = self._get_widget_scaling()
-        self.base_px_per_pt = 96 / 72 * scaling # 100% zoom = physical size on a 96 dpi screen
+        self.base_px_per_pt = 96 / 72 * scaling
         self.thumb_w, self.thumb_h = int(96 * scaling), int(124 * scaling)
         self.thumb_canvas_w = self.thumb_w + int(28 * scaling)
         self.cell_h = self.thumb_h + int(34 * scaling)
@@ -1392,7 +1363,6 @@ class VisualEditor(ctk.CTkFrame):
         self.show_page(0)
         self.schedule_thumbs()
 
-    # ---------- UI ----------
     def setup_ui(self):
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(2, weight=1)
@@ -1412,7 +1382,6 @@ class VisualEditor(ctk.CTkFrame):
         self.lbl_status = ctk.CTkLabel(topbar, text=hint, text_color="gray")
         self.lbl_status.pack(side="right", padx=10)
 
-        # Toolbar: navigation, zoom and tool actions
         toolbar = ctk.CTkFrame(self, fg_color="transparent")
         toolbar.grid(row=1, column=0, sticky="ew", padx=20, pady=4)
         small = dict(width=34, height=30)
@@ -1439,7 +1408,6 @@ class VisualEditor(ctk.CTkFrame):
 
         separator()
         if self.tool_name == "Girar PDF":
-            # The arrow glyphs alone look almost identical at this size, so the buttons also say the direction
             for label, all_pages in (("Página:", False), ("Todas:", True)):
                 ctk.CTkLabel(toolbar, text=label).pack(side="left", padx=(0, 4))
                 ctk.CTkButton(toolbar, text="↺ Esq.", width=64, height=30, command=lambda a=all_pages: self.rotate(-90, all_pages=a)).pack(side="left", padx=(0, 4))
@@ -1448,7 +1416,6 @@ class VisualEditor(ctk.CTkFrame):
             ctk.CTkButton(toolbar, text="Aplicar a Todas", width=120, height=30, command=self.apply_crop_to_all).pack(side="left", padx=(0, 4))
             ctk.CTkButton(toolbar, text="Limpar Corte", width=100, height=30, command=self.clear_crop).pack(side="left")
 
-        # Body: thumbnails + page
         body = ctk.CTkFrame(self, fg_color="transparent")
         body.grid(row=2, column=0, sticky="nsew", padx=20, pady=(6, 20))
         body.grid_rowconfigure(0, weight=1)
@@ -1480,7 +1447,6 @@ class VisualEditor(ctk.CTkFrame):
 
         self.page_canvas.bind("<Configure>", self.on_page_canvas_resize)
         self.page_canvas.bind("<MouseWheel>", self.on_page_wheel)
-        # Middle button pans in both tools; in the rotate tool the left button pans too
         self.page_canvas.bind("<ButtonPress-2>", lambda e: self.page_canvas.scan_mark(e.x, e.y))
         self.page_canvas.bind("<B2-Motion>", lambda e: self.page_canvas.scan_dragto(e.x, e.y, gain=1))
         if self.tool_name == "Cortar PDF":
@@ -1521,7 +1487,7 @@ class VisualEditor(ctk.CTkFrame):
         }
         for sequence, action in bindings.items():
             def handler(event, action=action):
-                if isinstance(event.widget, tk.Entry): # keep arrow keys working inside the page number field
+                if isinstance(event.widget, tk.Entry):
                     return
                 action()
             self.app.bind(sequence, handler)
@@ -1537,7 +1503,6 @@ class VisualEditor(ctk.CTkFrame):
             self.doc.close()
         super().destroy()
 
-    # ---------- Navigation ----------
     def on_page_entry(self, event):
         try:
             self.show_page(int(self.entry_page.get()) - 1)
@@ -1564,7 +1529,6 @@ class VisualEditor(ctk.CTkFrame):
     def on_thumb_click(self, event):
         self.show_page(int(self.thumbs.canvasy(event.y) // self.cell_h))
 
-    # ---------- Thumbnails ----------
     def draw_thumb_placeholders(self):
         fill, text = self.placeholder_color(), self.text_color()
         for i in range(self.page_count):
@@ -1577,11 +1541,10 @@ class VisualEditor(ctk.CTkFrame):
         self.thumbs.delete("selection")
         y = self.current * self.cell_h
         self.thumbs.create_rectangle(3, y + 3, self.thumb_canvas_w - 3, y + self.cell_h - 3, outline="#3B8ED0", width=3, tags=("selection",))
-        # Keep the current thumbnail visible
         top = self.thumbs.canvasy(0)
         height = self.thumbs.winfo_height()
         if height < self.cell_h:
-            return # not laid out yet: centering math would scroll the strip past the first page
+            return
         if y < top or y + self.cell_h > top + height:
             total = self.page_count * self.cell_h
             self.thumbs.yview_moveto(max(y - (height - self.cell_h) / 2, 0) / total)
@@ -1614,7 +1577,7 @@ class VisualEditor(ctk.CTkFrame):
             self.thumb_job = self.after(1, self.render_next_thumb)
 
     def render_next_thumb(self):
-        """Renders one thumbnail per event loop turn, visible ones first."""
+        """Renderiza miniaturas sob demanda."""
         self.thumb_job = None
         first_visible = max(int(self.thumbs.canvasy(0) // self.cell_h), 0)
         last_visible = min(first_visible + self.thumbs.winfo_height() // self.cell_h + 1, self.page_count - 1)
@@ -1636,7 +1599,6 @@ class VisualEditor(ctk.CTkFrame):
             self.thumbs.create_rectangle(x + crop[0] * w, y + crop[1] * h, x + crop[2] * w, y + crop[3] * h,
                                          outline="#E5534B", width=2, tags=(f"thumbcrop{i}",))
 
-    # ---------- Page rendering and zoom ----------
     def render_page(self, keep_scroll=True):
         canvas = self.page_canvas
         page = self.doc[self.current]
@@ -1650,7 +1612,7 @@ class VisualEditor(ctk.CTkFrame):
             px_per_pt = min((cw - 2 * self.page_margin) / w_pt, (ch - 2 * self.page_margin) / h_pt)
         else:
             px_per_pt = self.zoom * self.base_px_per_pt
-        px_per_pt = max(min(px_per_pt, 8000 / max(w_pt, h_pt)), 0.02) # cap the bitmap size
+        px_per_pt = max(min(px_per_pt, 8000 / max(w_pt, h_pt)), 0.02)
         self.effective_zoom = px_per_pt / self.base_px_per_pt
         self.lbl_zoom.configure(text=f"{round(self.effective_zoom * 100)}%")
 
@@ -1658,7 +1620,7 @@ class VisualEditor(ctk.CTkFrame):
         pix = page.get_pixmap(matrix=pymupdf.Matrix(px_per_pt, px_per_pt).prerotate(rotation))
         self.page_pix = pix
         self.page_photo = tk.PhotoImage(master=self, data=pix.tobytes("ppm"))
-        self.page_photo_dim = None # built on demand for the crop overlay
+        self.page_photo_dim = None
 
         region_w = max(cw, pix.width + 2 * self.page_margin)
         region_h = max(ch, pix.height + 2 * self.page_margin)
@@ -1697,19 +1659,18 @@ class VisualEditor(ctk.CTkFrame):
 
     def on_page_wheel(self, event):
         step = -1 if event.delta > 0 else 1
-        if event.state & 0x4: # Ctrl + wheel zooms
+        if event.state & 0x4:
             self.step_zoom(-step)
             return
-        if event.state & 0x1: # Shift + wheel scrolls sideways
+        if event.state & 0x1:
             self.page_canvas.xview_scroll(step, "units")
             return
         top, bottom = self.page_canvas.yview()
         if top <= 0 and bottom >= 1:
-            self.show_page(self.current + step) # whole page visible: the wheel flips pages
+            self.show_page(self.current + step)
         else:
             self.page_canvas.yview_scroll(step, "units")
 
-    # ---------- Rotate ----------
     def rotate(self, delta, all_pages=False):
         pages = range(self.page_count) if all_pages else [self.current]
         for i in pages:
@@ -1721,7 +1682,6 @@ class VisualEditor(ctk.CTkFrame):
             self.render_thumb(self.current)
         self.render_page(keep_scroll=False)
 
-    # ---------- Crop ----------
     def clamp_to_image(self, event):
         x0, y0, w, h = self.image_box
         x = min(max(self.page_canvas.canvasx(event.x), x0), x0 + w)
@@ -1746,7 +1706,7 @@ class VisualEditor(ctk.CTkFrame):
             return
         end = self.clamp_to_image(event)
         if abs(end[0] - self.drag_start[0]) < self.MIN_CROP_PX or abs(end[1] - self.drag_start[1]) < self.MIN_CROP_PX:
-            crop = None # a plain click (or tiny drag) clears the selection instead of creating an empty crop box
+            crop = None
         else:
             crop = self.relative_rect(self.drag_start, end)
         self.drag_start = None
@@ -1780,8 +1740,7 @@ class VisualEditor(ctk.CTkFrame):
         x, y, w, h = self.image_box
         px0, py0 = int(crop[0] * w), int(crop[1] * h)
         px1, py1 = max(int(crop[2] * w), px0 + 1), max(int(crop[3] * h), py0 + 1)
-        # The whole page is shown dimmed and the selected area is pasted on top at full brightness
-        # (Tk stipple patterns look like a coarse checkerboard on Windows)
+        # destaca a área selecionada
         canvas.itemconfigure("page", image=self.dimmed_page_photo())
         if not hasattr(self, "crop_photo"):
             self.crop_photo = tk.PhotoImage(master=self)
@@ -1795,7 +1754,6 @@ class VisualEditor(ctk.CTkFrame):
         if not crop:
             messagebox.showinfo("Aviso", "Desenhe o corte em uma página primeiro.")
             return
-        # Crops are relative, so pages of different sizes get the same proportional area
         for i in range(self.page_count):
             self.set_crop(i, crop)
         self.draw_page_crop()
@@ -1804,7 +1762,6 @@ class VisualEditor(ctk.CTkFrame):
         self.set_crop(self.current, None)
         self.draw_page_crop()
 
-    # ---------- Save / leave ----------
     def has_changes(self):
         return any(self.rotations) or any(self.crops)
 
@@ -1869,7 +1826,6 @@ class Dashboard(ctk.CTkFrame):
         lbl_title = ctk.CTkLabel(self, text="Selecione uma Ferramenta", font=ctk.CTkFont(size=26, weight="bold"))
         lbl_title.pack(pady=(20, 10))
 
-        # Scrollable: the cards of fourteen tools are taller than the window
         area = ctk.CTkScrollableFrame(self, fg_color="transparent")
         area.pack(expand=True, fill="both", padx=20, pady=(0, 15))
 
@@ -1926,7 +1882,7 @@ TOOL_GROUPS = (
 class App(ctk.CTk, TkinterDnD.DnDWrapper):
     def __init__(self):
         super().__init__()
-        # Loads the tkdnd Tcl extension into this interpreter (CTk can't inherit from TkinterDnD.Tk)
+        # inicializa extensão tkdnd
         self.TkdndVersion = TkinterDnD._require(self)
 
         self.title("PDF Tools")
@@ -1934,11 +1890,10 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.minsize(1000, 650)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
-        # Worker threads never touch Tk directly: they post callables that run on the main thread
+        # fila de comunicação com a thread principal
         self.ui_queue = queue.Queue()
         self.poll_ui_queue()
 
-        # Set Application Icon
         if getattr(sys, 'frozen', False):
             base_path = Path(sys._MEIPASS)
         else:
@@ -1958,7 +1913,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.sidebar_frame = ctk.CTkFrame(self, width=210, corner_radius=0)
         self.sidebar_frame.grid(row=0, column=0, sticky="nsew")
         self.sidebar_frame.grid_propagate(False)
-        self.sidebar_frame.grid_rowconfigure(2, weight=1) # the tool list takes the spare height
+        self.sidebar_frame.grid_rowconfigure(2, weight=1)
         self.sidebar_frame.grid_columnconfigure(0, weight=1)
 
         self.logo_label = ctk.CTkLabel(self.sidebar_frame, text="PDF Tools", font=ctk.CTkFont(size=20, weight="bold"))
@@ -1968,7 +1923,6 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.nav_buttons["Início"] = self.make_nav_button("🏠  Início", self.show_home)
         self.nav_buttons["Início"].grid(row=1, column=0, padx=10, pady=(0, 10), sticky="ew")
 
-        # Scrollable: fourteen tools plus their group headings don't fit a 650px window
         self.nav_scroll = ctk.CTkScrollableFrame(self.sidebar_frame, fg_color="transparent", width=170)
         self.nav_scroll.grid(row=2, column=0, sticky="nsew", padx=(4, 0))
         for group_name, group in TOOL_GROUPS:
@@ -2017,7 +1971,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
                              text_color=("white", "white") if active else ("gray10", "gray90"))
 
     def post(self, func):
-        """Thread-safe: schedules func to run on the Tk main thread."""
+        """Executa função na thread principal da interface."""
         self.ui_queue.put(func)
 
     def poll_ui_queue(self):
@@ -2029,7 +1983,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
             try:
                 func()
             except tk.TclError:
-                pass # the widget it targeted was closed in the meantime
+                pass
             except Exception:
                 self.report_callback_exception(*sys.exc_info())
         self.after(50, self.poll_ui_queue)
@@ -2065,7 +2019,7 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
     def open_tool(self, name, preset_files=None, force=False):
         view = self.current_view
         if not force and not preset_files and isinstance(view, ToolView) and view.tool_name == name:
-            return # already open: keep the current file list
+            return
         if not force and not self.can_leave_current_view():
             return
         desc, action, options = self.tools[name]
@@ -2079,7 +2033,6 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         try:
             self.current_view = VisualEditor(self.main_frame, self, tool_name, input_file, output_dir)
         except Exception as e:
-            # e.g. corrupted or password-protected PDF; without this the window was left blank
             messagebox.showerror("Erro", f"Não foi possível abrir '{Path(input_file).name}':\n\n{e}")
             self.open_tool(tool_name, preset_files=[input_file], force=True)
             return
