@@ -561,27 +561,6 @@ class ToolView(ctk.CTkFrame):
             if out_path.exists() and not messagebox.askyesno("Arquivo Existente", f"'{out_path.name}' já existe na pasta de destino.\n\nDeseja substituí-lo?"):
                 return
 
-        # Pre-flight check for Adicionar Margens
-        if self.tool_name == "Adicionar Margens":
-            out_dir = Path(self.output_dir).resolve()
-            if any(Path(f).resolve().parent == out_dir for f in files):
-                messagebox.showerror(
-                    "Pasta Inválida",
-                    "Para evitar qualquer risco de sobrescrever os originais, a pasta de destino não pode ser a mesma pasta de onde os PDFs vieram.\n\nPor favor, selecione uma pasta de saída diferente."
-                )
-                return
-
-            limit = pdf_tools.MARGINS_MAX_PAGES
-            too_long = [(f, self.file_list.page_count(f)) for f in files]
-            too_long = [(f, n) for f, n in too_long if n > limit]
-            if too_long:
-                names = "\n".join(f"• {Path(f).name} ({n} páginas)" for f, n in too_long[:10])
-                if not messagebox.askyesno(
-                    "Limite de Páginas Excedido",
-                    f"O limite é {limit} páginas. Nos arquivos abaixo, as páginas após a {limit}ª serão removidas:\n\n{names}\n\nDeseja continuar?"
-                ):
-                    return
-
         self.set_running(True)
         cancel_event = self.cancel_event
         action = self.tool_action
@@ -754,33 +733,70 @@ class CompressOptions(ctk.CTkFrame):
             self.level_var.set(values["compression_level"])
 
 class MarginsOptions(ctk.CTkFrame):
+    FIELDS = (("Esquerda", "margin_left_mm", 15), ("Direita", "margin_right_mm", 15),
+              ("Superior", "margin_top_mm", 5), ("Inferior", "margin_bottom_mm", 5))
+    A4_W_MM, A4_H_MM = 210, 297
+
     def __init__(self, master):
         super().__init__(master, fg_color="transparent")
-        self.lbl_x = ctk.CTkLabel(self, text="Margem X (mm):")
-        self.lbl_x.pack(side="left", padx=5)
-        self.entry_x = ctk.CTkEntry(self, width=50)
-        self.entry_x.insert(0, "15")
-        self.entry_x.pack(side="left", padx=5)
 
-        self.lbl_y = ctk.CTkLabel(self, text="Margem Y (mm):")
-        self.lbl_y.pack(side="left", padx=5)
-        self.entry_y = ctk.CTkEntry(self, width=50)
-        self.entry_y.insert(0, "5")
-        self.entry_y.pack(side="left", padx=5)
+        row1 = ctk.CTkFrame(self, fg_color="transparent")
+        row1.grid(row=0, column=0, sticky="w")
+        ctk.CTkLabel(row1, text="Margens (mm):").pack(side="left", padx=(5, 10))
+
+        self.entries = {}
+        for label, key, default in self.FIELDS:
+            ctk.CTkLabel(row1, text=f"{label}:").pack(side="left", padx=(5, 2))
+            entry = ctk.CTkEntry(row1, width=50)
+            entry.insert(0, str(default))
+            entry.pack(side="left", padx=(0, 5))
+            self.entries[key] = entry
+
+        row2 = ctk.CTkFrame(self, fg_color="transparent")
+        row2.grid(row=1, column=0, sticky="w", pady=(6, 0))
+
+        ctk.CTkLabel(row2, text="Tamanho da página:").pack(side="left", padx=(5, 5))
+        self.size_menu = ctk.CTkOptionMenu(row2, width=150, values=["Manter original", "A4"])
+        self.size_menu.set("Manter original")
+        self.size_menu.pack(side="left", padx=(0, 15))
+
+        self.grayscale_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(row2, text="Converter coloridas em tons de cinza",
+                        variable=self.grayscale_var).pack(side="left", padx=5)
+
+    def _page_size(self):
+        return "a4" if self.size_menu.get() == "A4" else "original"
 
     def get_values(self):
-        margin_x = parse_number(self.entry_x.get(), "Margem X", 15)
-        margin_y = parse_number(self.entry_y.get(), "Margem Y", 5)
-        # A4 is 210 x 297 mm; margins on both sides must leave room for the page content
-        if margin_x * 2 >= 210 or margin_y * 2 >= 297:
-            raise ValueError("As margens são grandes demais para uma página A4 (210 x 297 mm).")
-        return {"margin_x_mm": margin_x, "margin_y_mm": margin_y}
+        values = {}
+        for label, key, default in self.FIELDS:
+            # parse_number already rejects negatives and non-numbers
+            values[key] = parse_number(self.entries[key].get(), f"Margem {label}", default)
+
+        # Only A4 has known dimensions here; "Manter original" is checked per page at run time,
+        # since each file may have a different page size.
+        if self._page_size() == "a4":
+            if values["margin_left_mm"] + values["margin_right_mm"] >= self.A4_W_MM or                values["margin_top_mm"] + values["margin_bottom_mm"] >= self.A4_H_MM:
+                raise ValueError("As margens são grandes demais para uma página A4 (210 x 297 mm).")
+
+        values["page_size"] = self._page_size()
+        values["grayscale"] = self.grayscale_var.get()
+        return values
 
     def load_values(self, values):
-        for entry, key in ((self.entry_x, "margin_x_mm"), (self.entry_y, "margin_y_mm")):
-            if key in values:
+        # Settings saved before margins were split into four sides used one value per axis.
+        legacy = {"margin_left_mm": "margin_x_mm", "margin_right_mm": "margin_x_mm",
+                  "margin_top_mm": "margin_y_mm", "margin_bottom_mm": "margin_y_mm"}
+        for _, key, _ in self.FIELDS:
+            source = key if key in values else legacy[key]
+            if source in values:
+                entry = self.entries[key]
                 entry.delete(0, "end")
-                entry.insert(0, format_number(float(values[key])))
+                entry.insert(0, format_number(float(values[source])))
+
+        if values.get("page_size") == "a4":
+            self.size_menu.set("A4")
+        self.grayscale_var.set(bool(values.get("grayscale", False)))
 
 class VisualEditor(ctk.CTkFrame):
     """Single-page view with zoom and a thumbnail strip. Pages are rendered on demand,

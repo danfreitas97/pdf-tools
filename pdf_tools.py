@@ -270,13 +270,29 @@ def _is_page_colored(page: pymupdf.Page) -> bool:
     except Exception:
         return True
 
-MARGINS_MAX_PAGES = 7
+def _fit_centered(src_rect, box):
+    """Largest rect with src_rect's proportions that fits inside box, centered.
+    Without this, show_pdf_page stretches the content to fill the box and distorts it."""
+    scale = min(box.width / src_rect.width, box.height / src_rect.height)
+    w, h = src_rect.width * scale, src_rect.height * scale
+    x = box.x0 + (box.width - w) / 2
+    y = box.y0 + (box.height - h) / 2
+    return pymupdf.Rect(x, y, x + w, y + h)
 
-def add_margins(input_files, output_dir, margin_x_mm=15, margin_y_mm=5, progress_callback=None, cancel_event=None):
+def add_margins(input_files, output_dir, margin_left_mm=15, margin_right_mm=15,
+                margin_top_mm=5, margin_bottom_mm=5, grayscale=False, page_size="original",
+                progress_callback=None, cancel_event=None):
+    """Adds white borders around the content of every page.
+
+    page_size: "original" keeps each page's own dimensions; "a4" fits everything to A4,
+    following the source orientation (a landscape page becomes landscape A4).
+    grayscale: rasterizes colored pages to grayscale JPEG. Off by default because it
+    drops color and turns vector text into an image; kept for print workflows that need it.
+    """
     MM_TO_PT = 2.83465
     A4_W, A4_H = 595.0, 842.0
-    mx, my = margin_x_mm * MM_TO_PT, margin_y_mm * MM_TO_PT
-    safe_rect = pymupdf.Rect(mx, my, A4_W - mx, A4_H - my)
+    ml, mr = margin_left_mm * MM_TO_PT, margin_right_mm * MM_TO_PT
+    mt, mb = margin_top_mm * MM_TO_PT, margin_bottom_mm * MM_TO_PT
 
     errors = []
     total = len(input_files)
@@ -288,23 +304,39 @@ def add_margins(input_files, output_dir, margin_x_mm=15, margin_y_mm=5, progress
 
         try:
             with pymupdf.open(str(pdf)) as doc, pymupdf.open() as out_doc:
-                limit = min(doc.page_count, MARGINS_MAX_PAGES)
-                for p_num in range(limit):
+                n_pages = doc.page_count
+                for p_num in range(n_pages):
                     _check_cancel(cancel_event)
                     page = doc[p_num]
-                    out_page = out_doc.new_page(width=A4_W, height=A4_H)
+                    src = page.rect
 
-                    if _is_page_colored(page):
-                        # Transformação para Escala de Cinza
+                    if page_size == "a4":
+                        w, h = (A4_H, A4_W) if src.width > src.height else (A4_W, A4_H)
+                    else:
+                        w, h = src.width, src.height
+
+                    if ml + mr >= w or mt + mb >= h:
+                        raise ValueError(
+                            f"as margens não cabem na página {p_num + 1} "
+                            f"({w / MM_TO_PT:.0f} x {h / MM_TO_PT:.0f} mm)")
+
+                    out_page = out_doc.new_page(width=w, height=h)
+                    box = pymupdf.Rect(ml, mt, w - mr, h - mb)
+
+                    if grayscale and _is_page_colored(page):
                         pix = page.get_pixmap(dpi=300, colorspace=pymupdf.csGRAY)
                         img = Image.frombytes("L", [pix.width, pix.height], pix.samples)
                         buf = io.BytesIO()
                         img.save(buf, format="JPEG", quality=75, optimize=True)
-                        out_page.insert_image(safe_rect, stream=buf.getvalue())
+                        out_page.insert_image(_fit_centered(src, box), stream=buf.getvalue())
                     else:
-                        out_page.show_pdf_page(safe_rect, doc, page.number)
+                        out_page.show_pdf_page(_fit_centered(src, box), doc, p_num)
 
-                out_file = Path(output_dir) / f"{stem}.pdf"
+                    # Long documents would otherwise show no movement until the file is done
+                    if progress_callback and n_pages > 20 and p_num % 10 == 9:
+                        progress_callback(i, total, f"Adicionando margens em {pdf.name} ({p_num + 1}/{n_pages})...")
+
+                out_file = Path(output_dir) / f"{stem}_margens.pdf"
                 out_doc.save(str(out_file), garbage=4, deflate=True)
         except Exception as e:
             errors.append(f"{pdf.name}: {e}")

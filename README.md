@@ -15,7 +15,7 @@ A ideia é simples: as tarefas que normalmente levam você a um site tipo iLoveP
 | **PDF para Imagens** | Exporta cada página como imagem |
 | **Girar PDF** | Gira páginas com pré-visualização — você vê o resultado antes de salvar |
 | **Cortar PDF** | Desenha a área de corte direto sobre a página |
-| **Adicionar Margens** | Insere bordas brancas, útil para impressão e encadernação |
+| **Adicionar Margens** | Insere bordas brancas com medida independente nas 4 bordas, útil para impressão e encadernação |
 
 Interface com arrastar e soltar, tema claro/escuro automático, barra de progresso e cancelamento no meio da operação.
 
