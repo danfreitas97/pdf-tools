@@ -12,10 +12,10 @@ Este programa faz o mesmo serviço, mas **tudo acontece dentro da sua máquina**
 2. Dê dois cliques nele
 3. Pronto
 
-Não precisa instalar nada, nem ter Python ou qualquer outro programa. É um arquivo único: dá para deixar na área de trabalho, num pen drive ou numa pasta de rede.
+Não precisa instalar nada, nem baixar qualquer outro programa. É um arquivo único: dá para deixar na área de trabalho, num pen drive ou numa pasta de rede.
 
 > **O Windows mostrou um aviso azul de "aplicativo não reconhecido"?**
-> Isso é normal e acontece com todo programa pequeno que não paga por um certificado digital (que custa algumas centenas de dólares por ano). Clique em **Mais informações** e depois em **Executar assim mesmo**. Se preferir conferir antes, todo o código está aqui neste repositório, aberto para qualquer um ler.
+> Isso é normal e acontece com todo programa pequeno que não paga por um certificado digital (que custa algumas centenas de reais por ano). Clique em **Mais informações** e depois em **Executar assim mesmo**. Se preferir conferir antes, todo o código está aqui neste repositório, aberto para qualquer um ler.
 
 ## O que dá para fazer
 
@@ -76,7 +76,7 @@ Não. Pode processar cem arquivos de uma vez se o seu computador der conta.
 Não. Ele sempre cria arquivos novos, com um nome diferente. O original fica como estava.
 
 **Funciona em Mac ou Linux?**
-O arquivo pronto é só para Windows. Em outros sistemas dá para rodar pelo código-fonte (instruções no final).
+O arquivo pronto (.exe) é só para Windows. Em outros sistemas dá para rodar pelo código-fonte (instruções no final).
 
 **Achei um problema ou queria que fizesse outra coisa.**
 Abra um chamado em [Issues](../../issues) contando o que aconteceu.
