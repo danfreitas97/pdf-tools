@@ -6,3 +6,4 @@ PyMuPDF==1.28.2
 customtkinter==6.0.0
 darkdetect==0.8.0
 tkinterdnd2==0.6.3
+cryptography==50.0.1  # exigida pelo pypdf para criptografia AES-256

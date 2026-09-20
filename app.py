@@ -26,6 +26,7 @@ ctk.set_default_color_theme("blue")
 
 IMAGE_EXTS = [".jpg", ".jpeg", ".png", ".webp"]
 SINGLE_FILE_TOOLS = ["Girar PDF", "Cortar PDF"]
+ALLOW_PROTECTED_TOOLS = ["Remover Senha"]
 OUTPUT_FILE_TOOLS = ["Juntar PDFs", "Imagens para PDF"]
 DROP_HIGHLIGHT = ("#3B8ED0", "#1F6AA5")
 LIST_BG = ("#EBEBEB", "#2B2B2B")
@@ -258,7 +259,7 @@ class FileList(ctk.CTkFrame):
         threading.Thread(target=work, daemon=True).start()
 
     def read_info(self, path):
-        info = {"label": "inválido", "size": 0, "valid": False, "pages": 0}
+        info = {"label": "inválido", "size": 0, "valid": False, "pages": 0, "protected": False}
         try:
             info["size"] = os.path.getsize(path)
             if self.is_image_list:
@@ -270,7 +271,7 @@ class FileList(ctk.CTkFrame):
             else:
                 with pymupdf.open(path) as doc:
                     if doc.needs_pass:
-                        info["label"] = "🔒 senha"
+                        info.update(label="🔒 senha", protected=True)
                     else:
                         info.update(label=str(doc.page_count), valid=True, pages=doc.page_count)
         except Exception:
@@ -294,8 +295,11 @@ class FileList(ctk.CTkFrame):
             self.info[path] = self.read_info(path)
         return self.info[path]["pages"]
 
-    def invalid_files(self):
-        return [f for f in self.files if f in self.info and not self.info[f]["valid"]]
+    def invalid_files(self, allow_protected=False):
+        """Password-protected files count as invalid everywhere except in the tool whose
+        whole job is to remove that password."""
+        return [f for f in self.files if f in self.info and not self.info[f]["valid"]
+                and not (allow_protected and self.info[f].get("protected"))]
 
     def refresh(self):
         files = self.files
@@ -527,7 +531,7 @@ class ToolView(ctk.CTkFrame):
             messagebox.showwarning("Aviso", "Por favor, selecione os arquivos primeiro.")
             return
 
-        invalid = self.file_list.invalid_files()
+        invalid = self.file_list.invalid_files(allow_protected=self.tool_name in ALLOW_PROTECTED_TOOLS)
         if invalid:
             names = "\n".join(f"• {Path(f).name}" for f in invalid[:10]) + ("\n…" if len(invalid) > 10 else "")
             if len(invalid) == len(files):
@@ -706,31 +710,47 @@ class SplitOptions(ctk.CTkFrame):
 
 class CompressOptions(ctk.CTkFrame):
     LEVELS = ["Muito Baixa", "Baixa", "Média", "Alta", "Muito Alta"]
+    DPI_CHOICES = {"Manter original": 0, "300 dpi (gráfica)": 300,
+                   "150 dpi (impressora comum)": 150, "96 dpi (leitura na tela)": 96}
 
     def __init__(self, master):
         super().__init__(master, fg_color="transparent")
 
-        self.lbl_title = ctk.CTkLabel(self, text="Nível de Compressão:")
+        row1 = ctk.CTkFrame(self, fg_color="transparent")
+        row1.grid(row=0, column=0, sticky="w")
+
+        self.lbl_title = ctk.CTkLabel(row1, text="Nível de Compressão:")
         self.lbl_title.pack(side="left", padx=5)
 
         self.level_var = ctk.StringVar(value="Média")
-        self.optionmenu = ctk.CTkOptionMenu(self, values=self.LEVELS, variable=self.level_var)
+        self.optionmenu = ctk.CTkOptionMenu(row1, values=self.LEVELS, variable=self.level_var)
         self.optionmenu.pack(side="left", padx=5, pady=5)
+
+        ctk.CTkLabel(row1, text="Resolução das imagens:").pack(side="left", padx=(15, 5))
+        self.dpi_menu = ctk.CTkOptionMenu(row1, width=210, values=list(self.DPI_CHOICES))
+        self.dpi_menu.set("Manter original")
+        self.dpi_menu.pack(side="left", padx=5, pady=5)
 
         self.lbl_warning = ctk.CTkLabel(
             self,
-            text="⚠ Quanto MAIS ALTA a compressão, MENOR a qualidade das imagens.",
+            text="⚠ Quanto MAIS ALTA a compressão, MENOR a qualidade das imagens. "
+                 "Limitar a resolução costuma reduzir mais o arquivo do que baixar a qualidade.",
             text_color="#e6aa00",
-            font=ctk.CTkFont(size=12, slant="italic")
+            font=ctk.CTkFont(size=12, slant="italic"),
+            wraplength=820, justify="left"
         )
-        self.lbl_warning.pack(side="left", padx=10, pady=5)
+        self.lbl_warning.grid(row=1, column=0, sticky="w", padx=5, pady=(4, 0))
 
     def get_values(self):
-        return {"compression_level": self.level_var.get()}
+        return {"compression_level": self.level_var.get(),
+                "max_dpi": self.DPI_CHOICES[self.dpi_menu.get()]}
 
     def load_values(self, values):
         if values.get("compression_level") in self.LEVELS:
             self.level_var.set(values["compression_level"])
+        for label, dpi in self.DPI_CHOICES.items():
+            if dpi == values.get("max_dpi"):
+                self.dpi_menu.set(label)
 
 class MarginsOptions(ctk.CTkFrame):
     FIELDS = (("Esquerda", "margin_left_mm", 15), ("Direita", "margin_right_mm", 15),
@@ -745,8 +765,11 @@ class MarginsOptions(ctk.CTkFrame):
         ctk.CTkLabel(row1, text="Margens (mm):").pack(side="left", padx=(5, 10))
 
         self.entries = {}
+        self.labels = {}
         for label, key, default in self.FIELDS:
-            ctk.CTkLabel(row1, text=f"{label}:").pack(side="left", padx=(5, 2))
+            lbl = ctk.CTkLabel(row1, text=f"{label}:")
+            lbl.pack(side="left", padx=(5, 2))
+            self.labels[key] = lbl
             entry = ctk.CTkEntry(row1, width=50)
             entry.insert(0, str(default))
             entry.pack(side="left", padx=(0, 5))
@@ -760,9 +783,37 @@ class MarginsOptions(ctk.CTkFrame):
         self.size_menu.set("Manter original")
         self.size_menu.pack(side="left", padx=(0, 15))
 
+        self.mirror_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(row2, text="Encadernação (margem interna espelhada)",
+                        variable=self.mirror_var, command=self.on_mirror_change).pack(side="left", padx=5)
+
         self.grayscale_var = ctk.BooleanVar(value=False)
         ctk.CTkCheckBox(row2, text="Converter coloridas em tons de cinza",
-                        variable=self.grayscale_var).pack(side="left", padx=5)
+                        variable=self.grayscale_var).pack(side="left", padx=(15, 5))
+
+        self.btn_preview = ctk.CTkButton(row2, text="Pré-visualizar", width=120, command=self.open_preview)
+        self.btn_preview.pack(side="left", padx=(20, 5))
+
+    def on_mirror_change(self):
+        """With mirrored margins the left/right fields stop meaning left and right: they
+        become the inner (gutter) and outer edges, which swap on every other page."""
+        mirrored = self.mirror_var.get()
+        self.labels["margin_left_mm"].configure(text="Interna:" if mirrored else "Esquerda:")
+        self.labels["margin_right_mm"].configure(text="Externa:" if mirrored else "Direita:")
+
+    def open_preview(self):
+        tool_view = self.master
+        files = getattr(tool_view, "file_list", None)
+        files = files.files if files else []
+        if not files:
+            messagebox.showwarning("Aviso", "Selecione um PDF para pré-visualizar.")
+            return
+        try:
+            values = self.get_values()
+        except ValueError as e:
+            messagebox.showerror("Valor Inválido", str(e))
+            return
+        MarginPreview(self.winfo_toplevel(), files[0], values)
 
     def _page_size(self):
         return "a4" if self.size_menu.get() == "A4" else "original"
@@ -781,6 +832,7 @@ class MarginsOptions(ctk.CTkFrame):
 
         values["page_size"] = self._page_size()
         values["grayscale"] = self.grayscale_var.get()
+        values["mirror_margins"] = self.mirror_var.get()
         return values
 
     def load_values(self, values):
@@ -797,6 +849,328 @@ class MarginsOptions(ctk.CTkFrame):
         if values.get("page_size") == "a4":
             self.size_menu.set("A4")
         self.grayscale_var.set(bool(values.get("grayscale", False)))
+        self.mirror_var.set(bool(values.get("mirror_margins", False)))
+        self.on_mirror_change()
+
+class PagesOptions(ctk.CTkFrame):
+    MODES = (("Extrair (manter só estas)", "extract"), ("Remover estas páginas", "remove"))
+
+    def __init__(self, master):
+        super().__init__(master, fg_color="transparent")
+
+        row1 = ctk.CTkFrame(self, fg_color="transparent")
+        row1.grid(row=0, column=0, sticky="w")
+        ctk.CTkLabel(row1, text="Páginas:").pack(side="left", padx=(5, 5))
+        self.entry = ctk.CTkEntry(row1, width=220, placeholder_text="ex.: 1-3, 7, 10-")
+        self.entry.pack(side="left", padx=(0, 10))
+
+        self.mode_var = ctk.StringVar(value="extract")
+        for text, value in self.MODES:
+            ctk.CTkRadioButton(row1, text=text, variable=self.mode_var, value=value).pack(side="left", padx=8)
+
+        ctk.CTkLabel(self, text="A ordem digitada é respeitada, então \"3,1,2\" também reordena as páginas.",
+                     font=ctk.CTkFont(size=12, slant="italic"), text_color="gray"
+                     ).grid(row=1, column=0, sticky="w", padx=5, pady=(4, 0))
+
+    def get_values(self):
+        spec = self.entry.get().strip()
+        if not spec:
+            raise ValueError("Informe as páginas (ex.: 1-3, 7, 10-).")
+        return {"pages_spec": spec, "mode": self.mode_var.get()}
+
+    def load_values(self, values):
+        if values.get("mode") in [v for _, v in self.MODES]:
+            self.mode_var.set(values["mode"])
+        # pages_spec is deliberately not restored: it belongs to one specific document
+
+
+class ImposeOptions(ctk.CTkFrame):
+    LAYOUTS = (("2 páginas por folha", "2up"), ("Livreto (dobra e grampo central)", "booklet"))
+
+    def __init__(self, master):
+        super().__init__(master, fg_color="transparent")
+
+        row1 = ctk.CTkFrame(self, fg_color="transparent")
+        row1.grid(row=0, column=0, sticky="w")
+        self.layout_var = ctk.StringVar(value="2up")
+        for text, value in self.LAYOUTS:
+            ctk.CTkRadioButton(row1, text=text, variable=self.layout_var, value=value,
+                               command=self.on_layout_change).pack(side="left", padx=(5, 15))
+
+        ctk.CTkLabel(row1, text="Folha:").pack(side="left", padx=(10, 5))
+        self.sheet_menu = ctk.CTkOptionMenu(row1, width=170, values=["A4 paisagem", "Duas páginas lado a lado"])
+        self.sheet_menu.set("A4 paisagem")
+        self.sheet_menu.pack(side="left")
+
+        self.lbl_hint = ctk.CTkLabel(self, text="", font=ctk.CTkFont(size=12, slant="italic"), text_color="gray")
+        self.lbl_hint.grid(row=1, column=0, sticky="w", padx=5, pady=(4, 0))
+        self.on_layout_change()
+
+    def on_layout_change(self):
+        if self.layout_var.get() == "booklet":
+            self.lbl_hint.configure(text="Imprima frente e verso (virar pela borda curta). "
+                                         "As páginas são completadas até um múltiplo de 4.")
+        else:
+            self.lbl_hint.configure(text="Mantém a ordem de leitura: 1 e 2 na primeira folha, 3 e 4 na segunda.")
+
+    def get_values(self):
+        sheet = "auto" if self.sheet_menu.get().startswith("Duas") else "a4"
+        return {"layout": self.layout_var.get(), "sheet_size": sheet}
+
+    def load_values(self, values):
+        if values.get("layout") in [v for _, v in self.LAYOUTS]:
+            self.layout_var.set(values["layout"])
+        if values.get("sheet_size") == "auto":
+            self.sheet_menu.set("Duas páginas lado a lado")
+        self.on_layout_change()
+
+
+class PreflightOptions(ctk.CTkFrame):
+    def __init__(self, master):
+        super().__init__(master, fg_color="transparent")
+
+        row1 = ctk.CTkFrame(self, fg_color="transparent")
+        row1.grid(row=0, column=0, sticky="w")
+        ctk.CTkLabel(row1, text="Resolução mínima das imagens (dpi):").pack(side="left", padx=(5, 5))
+        self.entry_dpi = ctk.CTkEntry(row1, width=60)
+        self.entry_dpi.insert(0, "150")
+        self.entry_dpi.pack(side="left", padx=(0, 15))
+
+        ctk.CTkLabel(row1, text="Área de segurança da borda (mm):").pack(side="left", padx=(5, 5))
+        self.entry_margin = ctk.CTkEntry(row1, width=60)
+        self.entry_margin.insert(0, "5")
+        self.entry_margin.pack(side="left")
+
+        ctk.CTkLabel(self, text=f"Nada é alterado nos PDFs: o resultado é o relatório {pdf_tools.PREFLIGHT_REPORT_NAME}.",
+                     font=ctk.CTkFont(size=12, slant="italic"), text_color="gray"
+                     ).grid(row=1, column=0, sticky="w", padx=5, pady=(4, 0))
+
+    def get_values(self):
+        return {"min_dpi": parse_number(self.entry_dpi.get(), "Resolução mínima", 150),
+                "safe_margin_mm": parse_number(self.entry_margin.get(), "Área de segurança", 5)}
+
+    def load_values(self, values):
+        for entry, key in ((self.entry_dpi, "min_dpi"), (self.entry_margin, "safe_margin_mm")):
+            if key in values:
+                entry.delete(0, "end")
+                entry.insert(0, format_number(float(values[key])))
+
+
+class ProtectOptions(ctk.CTkFrame):
+    def __init__(self, master):
+        super().__init__(master, fg_color="transparent")
+
+        row1 = ctk.CTkFrame(self, fg_color="transparent")
+        row1.grid(row=0, column=0, sticky="w")
+        ctk.CTkLabel(row1, text="Senha:").pack(side="left", padx=(5, 5))
+        self.entry_pw = ctk.CTkEntry(row1, width=180, show="•")
+        self.entry_pw.pack(side="left", padx=(0, 10))
+        ctk.CTkLabel(row1, text="Repetir:").pack(side="left", padx=(5, 5))
+        self.entry_pw2 = ctk.CTkEntry(row1, width=180, show="•")
+        self.entry_pw2.pack(side="left", padx=(0, 10))
+
+        self.show_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(row1, text="Mostrar", variable=self.show_var, width=20,
+                        command=self.toggle_show).pack(side="left", padx=5)
+
+        row2 = ctk.CTkFrame(self, fg_color="transparent")
+        row2.grid(row=1, column=0, sticky="w", pady=(6, 0))
+        ctk.CTkLabel(row2, text="Permitir:").pack(side="left", padx=(5, 5))
+        self.print_var = ctk.BooleanVar(value=True)
+        self.copy_var = ctk.BooleanVar(value=True)
+        ctk.CTkCheckBox(row2, text="Impressão", variable=self.print_var).pack(side="left", padx=8)
+        ctk.CTkCheckBox(row2, text="Cópia de texto", variable=self.copy_var).pack(side="left", padx=8)
+        ctk.CTkLabel(row2, text="(restrições dependem do leitor de PDF respeitá-las)",
+                     font=ctk.CTkFont(size=12, slant="italic"), text_color="gray").pack(side="left", padx=10)
+
+    def toggle_show(self):
+        show = "" if self.show_var.get() else "•"
+        self.entry_pw.configure(show=show)
+        self.entry_pw2.configure(show=show)
+
+    def get_values(self):
+        pw = self.entry_pw.get()
+        if not pw:
+            raise ValueError("Informe uma senha.")
+        if pw != self.entry_pw2.get():
+            raise ValueError("As duas senhas não são iguais.")
+        return {"password": pw, "allow_printing": self.print_var.get(), "allow_copy": self.copy_var.get()}
+
+    # No load_values on purpose: a password must never be written to the settings file.
+
+
+class UnlockOptions(ctk.CTkFrame):
+    def __init__(self, master):
+        super().__init__(master, fg_color="transparent")
+
+        ctk.CTkLabel(self, text="Senha atual:").pack(side="left", padx=(5, 5))
+        self.entry_pw = ctk.CTkEntry(self, width=200, show="•")
+        self.entry_pw.pack(side="left", padx=(0, 10))
+
+        self.show_var = ctk.BooleanVar(value=False)
+        ctk.CTkCheckBox(self, text="Mostrar", variable=self.show_var, width=20,
+                        command=lambda: self.entry_pw.configure(show="" if self.show_var.get() else "•")
+                        ).pack(side="left", padx=5)
+
+        ctk.CTkLabel(self, text="Só funciona com PDFs que você já consegue abrir.",
+                     font=ctk.CTkFont(size=12, slant="italic"), text_color="gray").pack(side="left", padx=10)
+
+    def get_values(self):
+        return {"password": self.entry_pw.get()}
+
+
+class GrayscaleOptions(ctk.CTkFrame):
+    def __init__(self, master):
+        super().__init__(master, fg_color="transparent")
+
+        ctk.CTkLabel(self, text="Resolução (dpi):").pack(side="left", padx=(5, 5))
+        self.entry_dpi = ctk.CTkEntry(self, width=60)
+        self.entry_dpi.insert(0, "200")
+        self.entry_dpi.pack(side="left", padx=(0, 10))
+
+        ctk.CTkLabel(self, text="Páginas já em preto e branco são mantidas como estão, com o texto pesquisável.",
+                     font=ctk.CTkFont(size=12, slant="italic"), text_color="gray").pack(side="left", padx=10)
+
+    def get_values(self):
+        dpi = parse_number(self.entry_dpi.get(), "Resolução", 200)
+        if not 50 <= dpi <= 600:
+            raise ValueError("A resolução deve ficar entre 50 e 600 dpi.")
+        return {"dpi": int(dpi)}
+
+    def load_values(self, values):
+        if "dpi" in values:
+            self.entry_dpi.delete(0, "end")
+            self.entry_dpi.insert(0, format_number(float(values["dpi"])))
+
+
+class MarginPreview(ctk.CTkToplevel):
+    """Shows what the margins will do to a real page, using the same geometry the export
+    uses, so the preview can't drift from the result."""
+    MAX_SIDE = 560
+
+    def __init__(self, master, pdf_path, values):
+        super().__init__(master)
+        self.title(f"Pré-visualização — {Path(pdf_path).name}")
+        self.geometry("760x680")
+        self.transient(master)
+        self.values = values
+        self.page = 0
+        self.photo = None
+
+        try:
+            self.doc = pymupdf.open(str(pdf_path))
+            if self.doc.needs_pass:
+                raise ValueError("O PDF está protegido por senha.")
+            if self.doc.page_count == 0:
+                raise ValueError("O PDF não possui páginas.")
+        except Exception as e:
+            self.destroy()
+            messagebox.showerror("Não foi possível abrir", str(e), parent=master)
+            return
+
+        self.canvas = tk.Canvas(self, highlightthickness=0, bd=0)
+        self.canvas.pack(expand=True, fill="both", padx=20, pady=(20, 10))
+
+        bar = ctk.CTkFrame(self, fg_color="transparent")
+        bar.pack(fill="x", padx=20, pady=(0, 15))
+
+        self.btn_prev = ctk.CTkButton(bar, text="←", width=40, command=lambda: self.step(-1))
+        self.btn_prev.pack(side="left")
+        self.lbl_page = ctk.CTkLabel(bar, text="")
+        self.lbl_page.pack(side="left", padx=10)
+        self.btn_next = ctk.CTkButton(bar, text="→", width=40, command=lambda: self.step(1))
+        self.btn_next.pack(side="left")
+
+        self.lbl_info = ctk.CTkLabel(bar, text="", text_color="gray", font=ctk.CTkFont(size=12))
+        self.lbl_info.pack(side="left", padx=20)
+
+        ctk.CTkButton(bar, text="Fechar", width=90, command=self.close).pack(side="right")
+
+        self.protocol("WM_DELETE_WINDOW", self.close)
+        self.bind("<Left>", lambda e: self.step(-1))
+        self.bind("<Right>", lambda e: self.step(1))
+        self.bind("<Escape>", lambda e: self.close())
+        self.after(50, self.render)
+        self.after(120, self.lift)
+        self.after(140, self.focus_force)
+
+    def step(self, delta):
+        new = self.page + delta
+        if 0 <= new < self.doc.page_count:
+            self.page = new
+            self.render()
+
+    def render(self):
+        MM_TO_PT = 2.83465
+        v = self.values
+        margins_pt = (v["margin_left_mm"] * MM_TO_PT, v["margin_right_mm"] * MM_TO_PT,
+                      v["margin_top_mm"] * MM_TO_PT, v["margin_bottom_mm"] * MM_TO_PT)
+        src = self.doc[self.page].rect
+
+        try:
+            w, h, box = pdf_tools.margin_box(src, self.page, margins_pt,
+                                             v.get("page_size", "original"),
+                                             v.get("mirror_margins", False))
+        except ValueError as e:
+            self.canvas.delete("all")
+            self.canvas.create_text(20, 20, anchor="nw", width=max(200, self.canvas.winfo_width() - 40),
+                                    text=f"As margens não cabem nesta página:\n{e}", fill="#D9534F")
+            self.update_labels()
+            return
+
+        scale = min(self.MAX_SIDE / w, self.MAX_SIDE / h)
+        sheet_w, sheet_h = int(w * scale), int(h * scale)
+        content = pdf_tools._fit_centered(src, box)
+
+        # Renders the page itself at the size it will occupy inside the margins
+        zoom = (content.width * scale) / src.width
+        pix = self.doc[self.page].get_pixmap(matrix=pymupdf.Matrix(zoom, zoom))
+        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+
+        sheet = Image.new("RGB", (sheet_w, sheet_h), "white")
+        sheet.paste(img, (int(content.x0 * scale), int(content.y0 * scale)))
+        buf = io.BytesIO()
+        sheet.save(buf, format="PPM") # same path the visual editor uses, no ImageTk needed
+        self.photo = tk.PhotoImage(master=self, data=buf.getvalue())
+
+        self.canvas.delete("all")
+        cw = self.canvas.winfo_width() or 700
+        ch = self.canvas.winfo_height() or 560
+        x, y = (cw - sheet_w) // 2, (ch - sheet_h) // 2
+        dark = ctk.get_appearance_mode() == "Dark"
+        self.canvas.configure(bg="#2B2B2B" if dark else "#C8C8C8")
+        # Tk canvas colors have no alpha channel: a solid tone, as in the visual editor
+        self.canvas.create_rectangle(x + 4, y + 4, x + sheet_w + 4, y + sheet_h + 4,
+                                     fill="#0A0A0A" if dark else "#A8A8A8", outline="")
+        self.canvas.create_image(x, y, anchor="nw", image=self.photo)
+        self.canvas.create_rectangle(x, y, x + sheet_w, y + sheet_h, outline="#888")
+        # Dashed outline of the area the content was fitted into
+        self.canvas.create_rectangle(x + content.x0 * scale, y + content.y0 * scale,
+                                     x + content.x1 * scale, y + content.y1 * scale,
+                                     outline="#3B8ED0", dash=(4, 3))
+        self.update_labels(w, h)
+
+    def update_labels(self, w=None, h=None):
+        MM_TO_PT = 2.83465
+        self.lbl_page.configure(text=f"Página {self.page + 1} de {self.doc.page_count}")
+        self.btn_prev.configure(state="normal" if self.page > 0 else "disabled")
+        self.btn_next.configure(state="normal" if self.page < self.doc.page_count - 1 else "disabled")
+
+        info = ""
+        if w:
+            info = f"Folha {w / MM_TO_PT:.0f} × {h / MM_TO_PT:.0f} mm"
+            if self.values.get("mirror_margins"):
+                lado = "esquerda" if self.page % 2 == 0 else "direita"
+                info += f"  ·  lombada à {lado} (página {'ímpar' if self.page % 2 == 0 else 'par'})"
+        self.lbl_info.configure(text=info)
+
+    def close(self):
+        try:
+            self.doc.close()
+        except Exception:
+            pass
+        self.destroy()
+
 
 class VisualEditor(ctk.CTkFrame):
     """Single-page view with zoom and a thumbnail strip. Pages are rendered on demand,
@@ -1324,32 +1698,60 @@ class Dashboard(ctk.CTkFrame):
         super().__init__(master, fg_color="transparent")
         self.open_tool_callback = open_tool_callback
 
-        lbl_title = ctk.CTkLabel(self, text="Selecione uma Ferramenta", font=ctk.CTkFont(size=28, weight="bold"))
-        lbl_title.pack(pady=30)
+        lbl_title = ctk.CTkLabel(self, text="Selecione uma Ferramenta", font=ctk.CTkFont(size=26, weight="bold"))
+        lbl_title.pack(pady=(20, 10))
 
-        grid_frame = ctk.CTkFrame(self, fg_color="transparent")
-        grid_frame.pack(expand=True, fill="both", padx=20, pady=20)
-        grid_frame.grid_columnconfigure((0, 1, 2), weight=1)
+        # Scrollable: the cards of fourteen tools are taller than the window
+        area = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        area.pack(expand=True, fill="both", padx=20, pady=(0, 15))
 
-        row = 0
-        col = 0
-        for name, (desc, action, extra) in tools.items():
-            card = ctk.CTkFrame(grid_frame, corner_radius=10)
-            card.grid(row=row, column=col, padx=10, pady=10, sticky="nsew")
+        for group_name, group in TOOL_GROUPS:
+            ctk.CTkLabel(area, text=group_name.upper(), text_color="gray",
+                         font=ctk.CTkFont(size=12, weight="bold")).pack(anchor="w", padx=12, pady=(12, 4))
 
-            font_size = 14 if len(name) > 14 else 15
-            btn = ctk.CTkButton(card, text=name, font=ctk.CTkFont(size=font_size, weight="bold"),
-                                command=lambda n=name: self.open_tool_callback(n),
-                                height=60, fg_color="transparent", text_color=("black", "white"), hover_color=("gray85", "gray25"))
-            btn.pack(fill="x", pady=(10, 0), padx=10)
+            grid_frame = ctk.CTkFrame(area, fg_color="transparent")
+            grid_frame.pack(fill="x")
+            grid_frame.grid_columnconfigure((0, 1, 2), weight=1, uniform="card")
 
-            lbl = ctk.CTkLabel(card, text=desc, font=ctk.CTkFont(size=12), text_color="gray", wraplength=180)
-            lbl.pack(pady=(0, 10), padx=10)
+            for index, (name, (desc, action, extra)) in enumerate(group.items()):
+                card = ctk.CTkFrame(grid_frame, corner_radius=10)
+                card.grid(row=index // 3, column=index % 3, padx=8, pady=6, sticky="nsew")
 
-            col += 1
-            if col > 2:
-                col = 0
-                row += 1
+                font_size = 14 if len(name) > 14 else 15
+                btn = ctk.CTkButton(card, text=name, font=ctk.CTkFont(size=font_size, weight="bold"),
+                                    command=lambda n=name: self.open_tool_callback(n),
+                                    height=50, fg_color="transparent", text_color=("black", "white"),
+                                    hover_color=("gray85", "gray25"))
+                btn.pack(fill="x", pady=(10, 0), padx=10)
+
+                lbl = ctk.CTkLabel(card, text=desc, font=ctk.CTkFont(size=12), text_color="gray", wraplength=190)
+                lbl.pack(pady=(0, 10), padx=10)
+
+TOOL_GROUPS = (
+    ("Organizar", {
+        "Juntar PDFs": ("Junte vários PDFs em um só", pdf_tools.merge_pdfs, OutputFilenameOptions),
+        "Dividir PDF": ("Divida um PDF em partes", pdf_tools.split_pdfs, SplitOptions),
+        "Páginas": ("Extraia, remova ou reordene páginas", pdf_tools.select_pages, PagesOptions),
+        "Girar PDF": ("Gire as páginas visualmente", None, None),
+        "Cortar PDF": ("Corte as áreas visualmente", None, None),
+    }),
+    ("Converter", {
+        "Imagens para PDF": ("Converta imagens em PDF", pdf_tools.images_to_pdf, OutputFilenameOptions),
+        "PDF para Imagens": ("Extraia páginas como imagens", pdf_tools.pdf_to_images, None),
+        "Tons de Cinza": ("Converta para cinza e economize toner", pdf_tools.grayscale_pdfs, GrayscaleOptions),
+        "Comprimir": ("Reduza o tamanho do PDF", pdf_tools.compress_pdfs, CompressOptions),
+    }),
+    ("Impressão", {
+        "Adicionar Margens": ("Adicione bordas brancas", pdf_tools.add_margins, MarginsOptions),
+        "Montar Folhas": ("2 páginas por folha ou livreto", pdf_tools.impose_pdfs, ImposeOptions),
+        "Verificar Impressão": ("Aponte problemas antes de imprimir", pdf_tools.preflight_check, PreflightOptions),
+    }),
+    ("Segurança", {
+        "Proteger com Senha": ("Criptografe o PDF com senha", pdf_tools.protect_pdfs, ProtectOptions),
+        "Remover Senha": ("Tire a senha de PDFs que você abre", pdf_tools.unlock_pdfs, UnlockOptions),
+        "Limpar Metadados": ("Remova autor e histórico do arquivo", pdf_tools.clean_metadata, None),
+    }),
+)
 
 class App(ctk.CTk, TkinterDnD.DnDWrapper):
     def __init__(self):
@@ -1376,23 +1778,18 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         if icon_path.exists():
             self.iconbitmap(str(icon_path))
 
-        self.tools = {
-            "Juntar PDFs": ("Junte vários PDFs em um só", pdf_tools.merge_pdfs, OutputFilenameOptions),
-            "Dividir PDF": ("Divida um PDF em partes", pdf_tools.split_pdfs, SplitOptions),
-            "Comprimir": ("Reduza o tamanho do PDF", pdf_tools.compress_pdfs, CompressOptions),
-            "Imagens para PDF": ("Converta imagens em PDF", pdf_tools.images_to_pdf, OutputFilenameOptions),
-            "PDF para Imagens": ("Extraia páginas como imagens", pdf_tools.pdf_to_images, None),
-            "Girar PDF": ("Gire as páginas visualmente", None, None),
-            "Cortar PDF": ("Corte as áreas visualmente", None, None),
-            "Adicionar Margens": ("Adicione bordas brancas", pdf_tools.add_margins, MarginsOptions),
-        }
+        self.tools = {}
+        for _, group in TOOL_GROUPS:
+            self.tools.update(group)
 
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(1, weight=1)
 
-        self.sidebar_frame = ctk.CTkFrame(self, width=200, corner_radius=0)
+        self.sidebar_frame = ctk.CTkFrame(self, width=210, corner_radius=0)
         self.sidebar_frame.grid(row=0, column=0, sticky="nsew")
-        self.sidebar_frame.grid_rowconfigure(len(self.tools) + 3, weight=1)
+        self.sidebar_frame.grid_propagate(False)
+        self.sidebar_frame.grid_rowconfigure(2, weight=1) # the tool list takes the spare height
+        self.sidebar_frame.grid_columnconfigure(0, weight=1)
 
         self.logo_label = ctk.CTkLabel(self.sidebar_frame, text="PDF Tools", font=ctk.CTkFont(size=20, weight="bold"))
         self.logo_label.grid(row=0, column=0, padx=20, pady=(20, 10))
@@ -1400,14 +1797,20 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.nav_buttons = {}
         self.nav_buttons["Início"] = self.make_nav_button("🏠  Início", self.show_home)
         self.nav_buttons["Início"].grid(row=1, column=0, padx=10, pady=(0, 10), sticky="ew")
-        ctk.CTkLabel(self.sidebar_frame, text="FERRAMENTAS", text_color="gray", font=ctk.CTkFont(size=11, weight="bold")).grid(row=2, column=0, padx=20, sticky="w")
-        for index, name in enumerate(self.tools):
-            button = self.make_nav_button(name, lambda n=name: self.open_tool(n))
-            button.grid(row=index + 3, column=0, padx=10, pady=1, sticky="ew")
-            self.nav_buttons[name] = button
+
+        # Scrollable: fourteen tools plus their group headings don't fit a 650px window
+        self.nav_scroll = ctk.CTkScrollableFrame(self.sidebar_frame, fg_color="transparent", width=170)
+        self.nav_scroll.grid(row=2, column=0, sticky="nsew", padx=(4, 0))
+        for group_name, group in TOOL_GROUPS:
+            ctk.CTkLabel(self.nav_scroll, text=group_name.upper(), text_color="gray",
+                         font=ctk.CTkFont(size=11, weight="bold")).pack(anchor="w", padx=12, pady=(10, 2))
+            for name in group:
+                button = self.make_nav_button(name, lambda n=name: self.open_tool(n), master=self.nav_scroll)
+                button.pack(fill="x", padx=4, pady=1)
+                self.nav_buttons[name] = button
 
         self.theme_frame = ctk.CTkFrame(self.sidebar_frame, fg_color="transparent")
-        self.theme_frame.grid(row=len(self.tools) + 4, column=0, padx=10, pady=20, sticky="s")
+        self.theme_frame.grid(row=3, column=0, padx=10, pady=(10, 20), sticky="s")
 
         self.lbl_sun = ctk.CTkLabel(self.theme_frame, text="☀", font=ctk.CTkFont(size=24))
         self.lbl_sun.pack(side="left", padx=5)
@@ -1433,8 +1836,8 @@ class App(ctk.CTk, TkinterDnD.DnDWrapper):
         self.current_view = None
         self.show_home()
 
-    def make_nav_button(self, text, command):
-        return ctk.CTkButton(self.sidebar_frame, text=text, command=command, anchor="w", height=32,
+    def make_nav_button(self, text, command, master=None):
+        return ctk.CTkButton(master or self.sidebar_frame, text=text, command=command, anchor="w", height=32,
                              fg_color="transparent", text_color=("gray10", "gray90"), hover_color=("gray75", "gray30"))
 
     def set_active_nav(self, name):

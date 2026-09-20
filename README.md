@@ -6,16 +6,40 @@ A ideia é simples: as tarefas que normalmente levam você a um site tipo iLoveP
 
 ## Ferramentas
 
+**Organizar**
+
 | Ferramenta | O que faz |
 |---|---|
 | **Juntar PDFs** | Combina vários PDFs em um só, na ordem que você definir |
-| **Dividir PDF** | Separa um PDF em partes (ao meio, a cada N páginas ou por intervalo) |
-| **Comprimir** | Reduz o tamanho do arquivo em três níveis de compressão |
-| **Imagens para PDF** | Converte JPG, PNG e WebP em um único PDF |
-| **PDF para Imagens** | Exporta cada página como imagem |
+| **Dividir PDF** | Separa um PDF em partes (ao meio, a cada N páginas ou por tamanho) |
+| **Páginas** | Extrai, remove ou reordena páginas por intervalo (`1-3, 7, 10-`) |
 | **Girar PDF** | Gira páginas com pré-visualização — você vê o resultado antes de salvar |
 | **Cortar PDF** | Desenha a área de corte direto sobre a página |
-| **Adicionar Margens** | Insere bordas brancas com medida independente nas 4 bordas, útil para impressão e encadernação |
+
+**Converter**
+
+| Ferramenta | O que faz |
+|---|---|
+| **Imagens para PDF** | Converte JPG, PNG e WebP em um único PDF |
+| **PDF para Imagens** | Exporta cada página como imagem |
+| **Tons de Cinza** | Converte páginas coloridas para cinza e economiza toner; páginas já em preto e branco ficam intactas, com o texto pesquisável |
+| **Comprimir** | Reduz o tamanho por qualidade de imagem e por limite de resolução (300/150/96 dpi) |
+
+**Impressão**
+
+| Ferramenta | O que faz |
+|---|---|
+| **Adicionar Margens** | Bordas brancas com medida independente nas 4 bordas, modo encadernação (margem interna espelhada) e pré-visualização página a página |
+| **Montar Folhas** | 2 páginas por folha, ou livreto com a ordem certa para dobrar e grampear no centro |
+| **Verificar Impressão** | Relatório apontando tamanhos de página misturados, imagens de baixa resolução, fontes não embutidas, conteúdo fora da área segura e páginas em branco |
+
+**Segurança**
+
+| Ferramenta | O que faz |
+|---|---|
+| **Proteger com Senha** | Criptografa em AES-256, com controle de impressão e cópia de texto |
+| **Remover Senha** | Tira a proteção de PDFs que você já consegue abrir |
+| **Limpar Metadados** | Remove autor, software e histórico de edição antes de enviar o arquivo |
 
 Interface com arrastar e soltar, tema claro/escuro automático, barra de progresso e cancelamento no meio da operação.
 
@@ -57,7 +81,7 @@ Nenhum arquivo sai da sua máquina. O programa não faz requisições de rede. A
 
 ## Tecnologias
 
-[PyMuPDF](https://pymupdf.readthedocs.io/) e [pypdf](https://pypdf.readthedocs.io/) para manipulação dos PDFs, [Pillow](https://python-pillow.org/) para imagens, [CustomTkinter](https://customtkinter.tomschimansky.com/) para a interface e [PyInstaller](https://pyinstaller.org/) para o empacotamento.
+[PyMuPDF](https://pymupdf.readthedocs.io/) e [pypdf](https://pypdf.readthedocs.io/) para manipulação dos PDFs, [Pillow](https://python-pillow.org/) para imagens, [cryptography](https://cryptography.io/) para a criptografia AES-256, [CustomTkinter](https://customtkinter.tomschimansky.com/) para a interface e [PyInstaller](https://pyinstaller.org/) para o empacotamento.
 
 ## Licença
 
