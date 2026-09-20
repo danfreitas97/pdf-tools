@@ -1,6 +1,8 @@
-pypdf
-Pillow
-PyMuPDF
-customtkinter
-darkdetect
-tkinterdnd2
+# Versões fixas para que o executável seja reproduzível.
+# Testado com Python 3.13.
+pypdf==6.19.0
+Pillow==12.3.0
+PyMuPDF==1.28.2
+customtkinter==6.0.0
+darkdetect==0.8.0
+tkinterdnd2==0.6.3
