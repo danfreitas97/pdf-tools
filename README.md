@@ -38,7 +38,7 @@ A ideia é simples: as tarefas que normalmente levam você a um site tipo iLoveP
 | Ferramenta | O que faz |
 |---|---|
 | **Proteger com Senha** | Criptografa em AES-256, com controle de impressão e cópia de texto |
-| **Remover Senha** | Tira a proteção de PDFs que você já consegue abrir |
+| **Remover Senha** | Remove a proteção de PDFs, informando a senha que os abre |
 | **Limpar Metadados** | Remove autor, software e histórico de edição antes de enviar o arquivo |
 
 Interface com arrastar e soltar, tema claro/escuro automático, barra de progresso e cancelamento no meio da operação.

@@ -980,7 +980,7 @@ class ProtectOptions(ctk.CTkFrame):
         self.copy_var = ctk.BooleanVar(value=True)
         ctk.CTkCheckBox(row2, text="Impressão", variable=self.print_var).pack(side="left", padx=8)
         ctk.CTkCheckBox(row2, text="Cópia de texto", variable=self.copy_var).pack(side="left", padx=8)
-        ctk.CTkLabel(row2, text="(restrições dependem do leitor de PDF respeitá-las)",
+        ctk.CTkLabel(row2, text="(cada leitor de PDF decide se respeita essas restrições)",
                      font=ctk.CTkFont(size=12, slant="italic"), text_color="gray").pack(side="left", padx=10)
 
     def toggle_show(self):
@@ -1012,7 +1012,7 @@ class UnlockOptions(ctk.CTkFrame):
                         command=lambda: self.entry_pw.configure(show="" if self.show_var.get() else "•")
                         ).pack(side="left", padx=5)
 
-        ctk.CTkLabel(self, text="Só funciona com PDFs que você já consegue abrir.",
+        ctk.CTkLabel(self, text="Informe a senha atual do arquivo. Arquivos sem senha passam sem alteração.",
                      font=ctk.CTkFont(size=12, slant="italic"), text_color="gray").pack(side="left", padx=10)
 
     def get_values(self):
@@ -1744,11 +1744,11 @@ TOOL_GROUPS = (
     ("Impressão", {
         "Adicionar Margens": ("Adicione bordas brancas", pdf_tools.add_margins, MarginsOptions),
         "Montar Folhas": ("2 páginas por folha ou livreto", pdf_tools.impose_pdfs, ImposeOptions),
-        "Verificar Impressão": ("Aponte problemas antes de imprimir", pdf_tools.preflight_check, PreflightOptions),
+        "Verificar Impressão": ("Encontre problemas antes de imprimir", pdf_tools.preflight_check, PreflightOptions),
     }),
     ("Segurança", {
         "Proteger com Senha": ("Criptografe o PDF com senha", pdf_tools.protect_pdfs, ProtectOptions),
-        "Remover Senha": ("Tire a senha de PDFs que você abre", pdf_tools.unlock_pdfs, UnlockOptions),
+        "Remover Senha": ("Tire a proteção de PDFs cuja senha você tem", pdf_tools.unlock_pdfs, UnlockOptions),
         "Limpar Metadados": ("Remova autor e histórico do arquivo", pdf_tools.clean_metadata, None),
     }),
 )

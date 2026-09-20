@@ -762,8 +762,8 @@ def protect_pdfs(input_files, output_dir, password="", allow_printing=True, allo
     return errors
 
 def unlock_pdfs(input_files, output_dir, password="", progress_callback=None, cancel_event=None):
-    """Removes the password from PDFs the user can already open. Files that are not
-    encrypted pass through unchanged, so a mixed batch doesn't fail."""
+    """Removes the password from PDFs, given the password that opens them. Files that are
+    not encrypted pass through unchanged, so a mixed batch doesn't fail."""
     errors = []
     total = len(input_files)
     for i, (pdf_path, stem) in enumerate(zip(input_files, _output_stems(input_files))):
