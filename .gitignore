@@ -1,0 +1,56 @@
+# --- Build / distribuição (PyInstaller) ---
+# O executável é gerado por build.ps1 e publicado via GitHub Releases, não versionado.
+build/
+dist/
+*.manifest
+
+# --- Ambiente virtual ---
+# Recriado automaticamente por build.ps1 a partir de requirements.txt.
+.venv/
+venv/
+env/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# --- Testes / cobertura ---
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Configuração local do usuário ---
+settings.json
+*.local.json
+
+# --- Editores / IDEs ---
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# --- Sistema operacional ---
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+
+# --- Arquivos de trabalho / saída de testes manuais ---
+# PDFs e imagens soltos na raiz costumam ser material de teste pessoal.
+/*.pdf
+/*.png
+/*.jpg
+/*.jpeg
+/saida/
+/output/
+/temp/
+/tmp/

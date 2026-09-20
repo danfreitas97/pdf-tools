@@ -1,0 +1,6 @@
+pypdf
+Pillow
+PyMuPDF
+customtkinter
+darkdetect
+tkinterdnd2
