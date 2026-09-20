@@ -12,8 +12,8 @@ import sys
 import threading
 from pathlib import Path
 import darkdetect
-import fitz
 from PIL import Image
+import pymupdf
 from tkinterdnd2 import TkinterDnD, DND_FILES
 
 # Import our backend
@@ -268,7 +268,7 @@ class FileList(ctk.CTkFrame):
                         w, h = h, w
                 info.update(label=f"{w} × {h}", valid=True)
             else:
-                with fitz.open(path) as doc:
+                with pymupdf.open(path) as doc:
                     if doc.needs_pass:
                         info["label"] = "🔒 senha"
                     else:
@@ -800,7 +800,7 @@ class VisualEditor(ctk.CTkFrame):
         self.bound_keys = []
 
         # Opened from memory, so the file on disk is never locked while the editor is open
-        self.doc = fitz.open(stream=Path(input_file).read_bytes(), filetype="pdf")
+        self.doc = pymupdf.open(stream=Path(input_file).read_bytes(), filetype="pdf")
         if self.doc.needs_pass:
             raise ValueError("O PDF está protegido por senha.")
         if self.doc.page_count == 0:
@@ -1036,7 +1036,7 @@ class VisualEditor(ctk.CTkFrame):
         if rotation % 180:
             w, h = h, w
         scale = min(self.thumb_w / w, self.thumb_h / h)
-        pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale).prerotate(rotation))
+        pix = page.get_pixmap(matrix=pymupdf.Matrix(scale, scale).prerotate(rotation))
         self.thumb_photos[i] = tk.PhotoImage(master=self, data=pix.tobytes("ppm"))
         self.thumb_rotations[i] = rotation
 
@@ -1097,7 +1097,7 @@ class VisualEditor(ctk.CTkFrame):
         self.lbl_zoom.configure(text=f"{round(self.effective_zoom * 100)}%")
 
         x_view, y_view = canvas.xview()[0], canvas.yview()[0]
-        pix = page.get_pixmap(matrix=fitz.Matrix(px_per_pt, px_per_pt).prerotate(rotation))
+        pix = page.get_pixmap(matrix=pymupdf.Matrix(px_per_pt, px_per_pt).prerotate(rotation))
         self.page_pix = pix
         self.page_photo = tk.PhotoImage(master=self, data=pix.tobytes("ppm"))
         self.page_photo_dim = None # built on demand for the crop overlay

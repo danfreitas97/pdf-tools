@@ -14,7 +14,9 @@ if (-not (Test-Path ".venv\Scripts\python.exe")) {
 }
 $py = ".venv\Scripts\python.exe"
 
-Invoke-Checked $py -m pip install --disable-pip-version-check -q -r requirements.txt pyinstaller
+# PyInstaller is pinned: it decides the .exe layout, so an update to it would change
+# the build output with no change to the code.
+Invoke-Checked $py -m pip install --disable-pip-version-check -q -r requirements.txt pyinstaller==6.22.3
 Invoke-Checked $py -m PyInstaller "PDF Tools.spec" --noconfirm
 
 Write-Host "Pronto: dist\PDF Tools.exe"

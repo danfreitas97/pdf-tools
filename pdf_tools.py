@@ -3,7 +3,7 @@ import shutil
 from pathlib import Path
 from pypdf import PdfWriter, PdfReader
 from PIL import Image, ImageOps, ImageChops
-import fitz
+import pymupdf
 
 # Batch functions return a list of "arquivo: erro" strings instead of printing,
 # because the packaged app has no console where print() output could be seen.
@@ -220,7 +220,7 @@ def images_to_pdf(input_files, output_file, progress_callback=None, cancel_event
     total = len(input_files)
     # Pages are added one image at a time, so only one decoded image is in memory at once
     # (a batch of phone photos would otherwise need several GB of RAM).
-    with fitz.open() as out_doc:
+    with pymupdf.open() as out_doc:
         for i, img_path in enumerate(input_files):
             _check_cancel(cancel_event)
             if progress_callback:
@@ -258,8 +258,8 @@ def images_to_pdf(input_files, output_file, progress_callback=None, cancel_event
         progress_callback(total, total, f"Concluído! {Path(output_file).name} ({format_size(Path(output_file).stat().st_size)})")
     return errors
 
-def _is_page_colored(page: fitz.Page) -> bool:
-    pix = page.get_pixmap(matrix=fitz.Matrix(0.2, 0.2), colorspace=fitz.csRGB)
+def _is_page_colored(page: pymupdf.Page) -> bool:
+    pix = page.get_pixmap(matrix=pymupdf.Matrix(0.2, 0.2), colorspace=pymupdf.csRGB)
     try:
         img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
         r, g, b = img.split()
@@ -276,7 +276,7 @@ def add_margins(input_files, output_dir, margin_x_mm=15, margin_y_mm=5, progress
     MM_TO_PT = 2.83465
     A4_W, A4_H = 595.0, 842.0
     mx, my = margin_x_mm * MM_TO_PT, margin_y_mm * MM_TO_PT
-    safe_rect = fitz.Rect(mx, my, A4_W - mx, A4_H - my)
+    safe_rect = pymupdf.Rect(mx, my, A4_W - mx, A4_H - my)
 
     errors = []
     total = len(input_files)
@@ -287,7 +287,7 @@ def add_margins(input_files, output_dir, margin_x_mm=15, margin_y_mm=5, progress
             progress_callback(i, total, f"Adicionando margens em {pdf.name}...")
 
         try:
-            with fitz.open(str(pdf)) as doc, fitz.open() as out_doc:
+            with pymupdf.open(str(pdf)) as doc, pymupdf.open() as out_doc:
                 limit = min(doc.page_count, MARGINS_MAX_PAGES)
                 for p_num in range(limit):
                     _check_cancel(cancel_event)
@@ -296,7 +296,7 @@ def add_margins(input_files, output_dir, margin_x_mm=15, margin_y_mm=5, progress
 
                     if _is_page_colored(page):
                         # Transformação para Escala de Cinza
-                        pix = page.get_pixmap(dpi=300, colorspace=fitz.csGRAY)
+                        pix = page.get_pixmap(dpi=300, colorspace=pymupdf.csGRAY)
                         img = Image.frombytes("L", [pix.width, pix.height], pix.samples)
                         buf = io.BytesIO()
                         img.save(buf, format="JPEG", quality=75, optimize=True)
@@ -332,7 +332,7 @@ def crop_pdf_visual(input_file, output_dir, crop_boxes_dict):
     """crop_boxes_dict maps page index to (x0, y0, x1, y1) relative (0..1) to the page as displayed.
     Returns the path of the file written."""
     pdf = Path(input_file)
-    with fitz.open(str(pdf)) as doc:
+    with pymupdf.open(str(pdf)) as doc:
         for i, box in crop_boxes_dict.items():
             if i < doc.page_count:
                 page = doc[i]
@@ -343,7 +343,7 @@ def crop_pdf_visual(input_file, output_dir, crop_boxes_dict):
 
                 # Coordinates are relative to what the user saw (rotated, already-cropped page);
                 # set_cropbox expects unrotated coordinates relative to the mediabox.
-                rect = fitz.Rect(rel_x0 * w, rel_y0 * h, rel_x1 * w, rel_y1 * h) * page.derotation_matrix
+                rect = pymupdf.Rect(rel_x0 * w, rel_y0 * h, rel_x1 * w, rel_y1 * h) * page.derotation_matrix
                 rect = rect + (page.cropbox.x0, page.cropbox.y0, page.cropbox.x0, page.cropbox.y0)
                 page.set_cropbox(rect & page.mediabox)
 
@@ -361,7 +361,7 @@ def pdf_to_images(input_files, output_dir, progress_callback=None, cancel_event=
             progress_callback(i, total, f"Extraindo imagens de {pdf.name}...")
 
         try:
-            with fitz.open(str(pdf)) as doc:
+            with pymupdf.open(str(pdf)) as doc:
                 for page_num in range(len(doc)):
                     _check_cancel(cancel_event)
                     page = doc.load_page(page_num)
