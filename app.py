@@ -1,3 +1,4 @@
+import base64
 import customtkinter as ctk
 import io
 import tkinter as tk
@@ -12,7 +13,7 @@ import sys
 import threading
 from pathlib import Path
 import darkdetect
-from PIL import Image
+from PIL import Image, ImageOps
 import pymupdf
 from tkinterdnd2 import TkinterDnD, DND_FILES
 
@@ -24,7 +25,10 @@ ctk.set_appearance_mode("System")
 ctk.set_default_color_theme("blue")
 
 IMAGE_EXTS = [".jpg", ".jpeg", ".png", ".webp"]
-SINGLE_FILE_TOOLS = ["Girar PDF", "Cortar PDF"]
+IMAGE_TOOL = "Inserir Imagem"
+ERASER_TOOL = "Modo Borracha"
+MARK_TOOLS = [IMAGE_TOOL, ERASER_TOOL]
+SINGLE_FILE_TOOLS = ["Girar PDF", "Cortar PDF"] + MARK_TOOLS
 ALLOW_PROTECTED_TOOLS = ["Remover Senha"]
 OUTPUT_FILE_TOOLS = ["Juntar PDFs", "Imagens para PDF"]
 DROP_HIGHLIGHT = ("#3B8ED0", "#1F6AA5")
@@ -1317,6 +1321,7 @@ class VisualEditor(ctk.CTkFrame):
     """Editor visual de páginas para corte e rotação."""
     ZOOM_STEPS = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0]
     MIN_CROP_PX = 5
+    HANDLE_PX = 8
 
     def __init__(self, master, app, tool_name, input_file, output_dir):
         super().__init__(master, fg_color="transparent")
@@ -1349,6 +1354,12 @@ class VisualEditor(ctk.CTkFrame):
         self.image_box = None
         self.drag_start = None
         self.saving = False
+        self.marks = [[] for _ in range(n)]  # por página: {"rect": caixa relativa, "image": caminho ou None}
+        self.history = []
+        self.mark_drag = None
+        self.image_path = None
+        self.image_cache = {}
+        self.mark_photos = {}
 
         scaling = self._get_widget_scaling()
         self.base_px_per_pt = 96 / 72 * scaling
@@ -1378,8 +1389,7 @@ class VisualEditor(ctk.CTkFrame):
         self.btn_save = ctk.CTkButton(topbar, text="Salvar e Exportar", fg_color="#2ecc71", hover_color="#27ae60", command=self.save_and_export)
         self.btn_save.pack(side="right", padx=10, pady=10)
 
-        hint = "Arraste sobre a página para marcar o corte" if self.tool_name == "Cortar PDF" else ""
-        self.lbl_status = ctk.CTkLabel(topbar, text=hint, text_color="gray")
+        self.lbl_status = ctk.CTkLabel(topbar, text=self.default_hint(), text_color="gray")
         self.lbl_status.pack(side="right", padx=10)
 
         toolbar = ctk.CTkFrame(self, fg_color="transparent")
@@ -1415,6 +1425,13 @@ class VisualEditor(ctk.CTkFrame):
         elif self.tool_name == "Cortar PDF":
             ctk.CTkButton(toolbar, text="Aplicar a Todas", width=120, height=30, command=self.apply_crop_to_all).pack(side="left", padx=(0, 4))
             ctk.CTkButton(toolbar, text="Limpar Corte", width=100, height=30, command=self.clear_crop).pack(side="left")
+        elif self.tool_name in MARK_TOOLS:
+            if self.tool_name == IMAGE_TOOL:
+                self.btn_image = ctk.CTkButton(toolbar, text="Escolher Imagem…", width=112, height=30, command=self.choose_image)
+                self.btn_image.pack(side="left", padx=(0, 10))
+            ctk.CTkButton(toolbar, text="↶", width=34, height=30, command=self.undo_marks).pack(side="left", padx=(0, 4))
+            ctk.CTkButton(toolbar, text="Limpar", width=70, height=30, command=self.clear_page_marks).pack(side="left", padx=(0, 4))
+            ctk.CTkButton(toolbar, text="Repetir em Todas", width=120, height=30, command=self.repeat_marks_on_all).pack(side="left")
 
         body = ctk.CTkFrame(self, fg_color="transparent")
         body.grid(row=2, column=0, sticky="nsew", padx=20, pady=(6, 20))
@@ -1454,6 +1471,13 @@ class VisualEditor(ctk.CTkFrame):
             self.page_canvas.bind("<ButtonPress-1>", self.on_crop_press)
             self.page_canvas.bind("<B1-Motion>", self.on_crop_drag)
             self.page_canvas.bind("<ButtonRelease-1>", self.on_crop_release)
+        elif self.tool_name in MARK_TOOLS:
+            self.page_canvas.configure(cursor="crosshair")
+            self.page_canvas.bind("<ButtonPress-1>", self.on_mark_press)
+            self.page_canvas.bind("<B1-Motion>", self.on_mark_drag)
+            self.page_canvas.bind("<ButtonRelease-1>", self.on_mark_release)
+            self.page_canvas.bind("<ButtonPress-3>", self.on_mark_right_click)
+            self.page_canvas.bind("<Motion>", self.on_mark_hover)
         else:
             self.page_canvas.configure(cursor="fleur")
             self.page_canvas.bind("<ButtonPress-1>", lambda e: self.page_canvas.scan_mark(e.x, e.y))
@@ -1485,6 +1509,8 @@ class VisualEditor(ctk.CTkFrame):
             "<Control-plus>": lambda: self.step_zoom(1), "<Control-equal>": lambda: self.step_zoom(1),
             "<Control-minus>": lambda: self.step_zoom(-1), "<Control-0>": self.zoom_fit,
         }
+        if self.tool_name in MARK_TOOLS:
+            bindings["<Control-z>"] = self.undo_marks
         for sequence, action in bindings.items():
             def handler(event, action=action):
                 if isinstance(event.widget, tk.Entry):
@@ -1567,6 +1593,7 @@ class VisualEditor(ctk.CTkFrame):
         self.thumbs.create_image(x, y, anchor="nw", image=self.thumb_photos[i], tags=(f"thumb{i}",))
         self.thumb_geometry[i] = (x, y, pix.width, pix.height)
         self.draw_thumb_crop(i)
+        self.draw_thumb_marks(i)
         self.thumbs.tag_raise("selection")
 
     def thumb_is_stale(self, i):
@@ -1633,6 +1660,8 @@ class VisualEditor(ctk.CTkFrame):
         canvas.xview_moveto(x_view if keep_scroll else 0)
         canvas.yview_moveto(y_view if keep_scroll else 0)
         self.draw_page_crop()
+        self.mark_photos = {}
+        self.draw_page_marks()
 
     def on_page_canvas_resize(self, event):
         if self.resize_job:
@@ -1762,8 +1791,304 @@ class VisualEditor(ctk.CTkFrame):
         self.set_crop(self.current, None)
         self.draw_page_crop()
 
+    def default_hint(self):
+        return {"Cortar PDF": "Arraste sobre a página para marcar o corte",
+                IMAGE_TOOL: "Clique ou arraste na página para pôr a imagem",
+                ERASER_TOOL: "Arraste sobre o que quer apagar"}.get(self.tool_name, "")
+
+    # --- Inserir Imagem / Modo Borracha ---
+
+    def choose_image(self):
+        path = filedialog.askopenfilename(title="Escolha a imagem", initialdir=settings.get("last_image_dir"),
+                                          filetypes=[("Imagens", " ".join(f"*{ext}" for ext in IMAGE_EXTS))])
+        if not path:
+            return
+        try:
+            self.load_image(path)
+        except Exception as e:
+            messagebox.showerror("Imagem inválida", f"Não foi possível abrir '{Path(path).name}':\n\n{e}")
+            return
+        settings.set("last_image_dir", str(Path(path).parent))
+        self.image_path = path
+        name = Path(path).name
+        self.btn_image.configure(text="🖼 " + (name if len(name) <= 11 else name[:10] + "…"))
+
+    def load_image(self, path):
+        if path not in self.image_cache:
+            with Image.open(path) as im:
+                img = ImageOps.exif_transpose(im).convert("RGBA")
+            img.thumbnail((2000, 2000))  # cópia leve só para a pré-visualização
+            self.image_cache[path] = img
+        return self.image_cache[path]
+
+    def to_relative(self, x, y):
+        x0, y0, w, h = self.image_box
+        return (x - x0) / w, (y - y0) / h
+
+    def mark_at(self, rx, ry):
+        marks = self.marks[self.current]
+        for index in range(len(marks) - 1, -1, -1):
+            x0, y0, x1, y1 = marks[index]["rect"]
+            if x0 <= rx <= x1 and y0 <= ry <= y1:
+                return index
+        return None
+
+    def fit_image_rect(self, cx, cy, max_w, max_h):
+        """Retângulo (em pixels) com a proporção da imagem, centrado e cabendo em max_w × max_h."""
+        img = self.load_image(self.image_path)
+        aspect = img.width / img.height
+        w, h = (max_h * aspect, max_h) if max_w / max_h > aspect else (max_w, max_w / aspect)
+        return cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2
+
+    def new_mark_rect(self, start, end):
+        x0, y0 = min(start[0], end[0]), min(start[1], end[1])
+        x1, y1 = max(start[0], end[0]), max(start[1], end[1])
+        if self.tool_name == IMAGE_TOOL:
+            x0, y0, x1, y1 = self.fit_image_rect((x0 + x1) / 2, (y0 + y1) / 2, max(x1 - x0, 1), max(y1 - y0, 1))
+        return self.relative_rect((x0, y0), (x1, y1))
+
+    @staticmethod
+    def clamp_rect(rect):
+        """Desloca o retângulo relativo para dentro da página, sem mudar o tamanho."""
+        x0, y0, x1, y1 = rect
+        dx = -x0 if x0 < 0 else min(1 - x1, 0)
+        dy = -y0 if y0 < 0 else min(1 - y1, 0)
+        return x0 + dx, y0 + dy, x1 + dx, y1 + dy
+
+    def mark_pixel_rect(self, rect):
+        x, y, w, h = self.image_box
+        return x + rect[0] * w, y + rect[1] * h, x + rect[2] * w, y + rect[3] * h
+
+    def handle_at(self, cx, cy):
+        """Retorna (marcação, canto) se o ponto estiver sobre uma alça de redimensionar."""
+        marks = self.marks[self.current]
+        for index in range(len(marks) - 1, -1, -1):
+            x0, y0, x1, y1 = self.mark_pixel_rect(marks[index]["rect"])
+            corners = ((x0, y0), (x1, y0), (x1, y1), (x0, y1))
+            # o canto mais próximo vence, para marcações pequenas em que as alças se encostam
+            distance, corner = min((max(abs(cx - hx), abs(cy - hy)), c) for c, (hx, hy) in enumerate(corners))
+            if distance <= self.HANDLE_PX:
+                return index, corner
+        return None
+
+    def push_history(self, pages):
+        self.history.append({i: list(self.marks[i]) for i in pages})
+        del self.history[:-50]
+
+    def on_mark_press(self, event):
+        self.page_canvas.focus_set()
+        if not self.image_box:
+            return
+        point = self.clamp_to_image(event)
+        handle = self.handle_at(self.page_canvas.canvasx(event.x), self.page_canvas.canvasy(event.y))
+        if handle:
+            index, corner = handle
+            x0, y0, x1, y1 = self.mark_pixel_rect(self.marks[self.current][index]["rect"])
+            corners = ((x0, y0), (x1, y0), (x1, y1), (x0, y1))
+            (cx, cy), (ax, ay) = corners[corner], corners[(corner + 2) % 4]
+            self.mark_drag = {"resize": index, "anchor": (ax, ay), "dir": (1 if cx > ax else -1, 1 if cy > ay else -1),
+                              "size": (x1 - x0, y1 - y0), "moved": False}
+            return
+        hit = self.mark_at(*self.to_relative(*point))
+        if hit is not None:
+            self.mark_drag = {"move": hit, "start": point, "rect": self.marks[self.current][hit]["rect"], "moved": False}
+            return
+        if self.tool_name == IMAGE_TOOL and not self.image_path:
+            self.choose_image()  # o próximo clique já posiciona a imagem
+            return
+        self.mark_drag = {"start": point}
+
+    def on_mark_drag(self, event):
+        drag = self.mark_drag
+        if not drag:
+            return
+        point = self.clamp_to_image(event)
+        if "resize" in drag:
+            self.resize_mark(drag, point)
+        elif "move" in drag:
+            _, _, w, h = self.image_box
+            dx, dy = (point[0] - drag["start"][0]) / w, (point[1] - drag["start"][1]) / h
+            x0, y0, x1, y1 = drag["rect"]
+            if not drag["moved"]:
+                self.push_history([self.current])
+                drag["moved"] = True
+            mark = self.marks[self.current][drag["move"]]
+            self.marks[self.current][drag["move"]] = dict(mark, rect=self.clamp_rect((x0 + dx, y0 + dy, x1 + dx, y1 + dy)))
+            self.draw_page_marks()
+        else:
+            self.draw_page_marks(preview=self.new_mark_rect(drag["start"], point))
+
+    def on_mark_release(self, event):
+        drag, self.mark_drag = self.mark_drag, None
+        if not drag:
+            return
+        if "move" in drag or "resize" in drag:
+            if drag["moved"]:
+                self.marks_changed([self.current])
+            else:
+                self.draw_page_marks()
+            return
+        start, end = drag["start"], self.clamp_to_image(event)
+        small = abs(end[0] - start[0]) < self.MIN_CROP_PX or abs(end[1] - start[1]) < self.MIN_CROP_PX
+        if not small:
+            rect = self.new_mark_rect(start, end)
+        elif self.tool_name == IMAGE_TOOL:
+            # clique simples: imagem com 30% da largura da página, centrada no clique
+            _, _, w, h = self.image_box
+            x0, y0, x1, y1 = self.fit_image_rect(start[0], start[1], w * 0.3, h * 0.5)
+            rect = self.clamp_rect(self.relative_rect((x0, y0), (x1, y1)))
+        else:
+            self.draw_page_marks()
+            return
+        self.push_history([self.current])
+        self.marks[self.current].append({"rect": rect, "image": self.image_path if self.tool_name == IMAGE_TOOL else None})
+        self.marks_changed([self.current])
+
+    def on_mark_right_click(self, event):
+        if not self.image_box or self.mark_drag:
+            return
+        hit = self.mark_at(*self.to_relative(self.page_canvas.canvasx(event.x), self.page_canvas.canvasy(event.y)))
+        if hit is not None:
+            self.push_history([self.current])
+            del self.marks[self.current][hit]
+            self.marks_changed([self.current])
+
+    def on_mark_hover(self, event):
+        if not self.image_box or self.mark_drag:
+            return
+        cx, cy = self.page_canvas.canvasx(event.x), self.page_canvas.canvasy(event.y)
+        handle = self.handle_at(cx, cy)
+        if handle:
+            cursor = "size_nw_se" if handle[1] in (0, 2) else "size_ne_sw"
+        else:
+            cursor = "fleur" if self.mark_at(*self.to_relative(cx, cy)) is not None else "crosshair"
+        self.page_canvas.configure(cursor=cursor)
+
+    def resize_mark(self, drag, point):
+        """Redimensiona pela alça, com o canto oposto fixo. Imagens mantêm a proporção."""
+        x, y, w, h = self.image_box
+        (ax, ay), (sx, sy), (w0, h0) = drag["anchor"], drag["dir"], drag["size"]
+        room_w = (x + w - ax) if sx > 0 else (ax - x)
+        room_h = (y + h - ay) if sy > 0 else (ay - y)
+        index = drag["resize"]
+        mark = self.marks[self.current][index]
+        if mark["image"]:
+            scale = max(sx * (point[0] - ax) / w0, sy * (point[1] - ay) / h0)
+            scale = min(max(scale, self.MIN_CROP_PX / min(w0, h0)), room_w / w0, room_h / h0)
+            new_w, new_h = w0 * scale, h0 * scale
+        else:
+            new_w = min(max(sx * (point[0] - ax), self.MIN_CROP_PX), room_w)
+            new_h = min(max(sy * (point[1] - ay), self.MIN_CROP_PX), room_h)
+        if not drag["moved"]:
+            self.push_history([self.current])
+            drag["moved"] = True
+        rect = self.relative_rect((ax, ay), (ax + sx * new_w, ay + sy * new_h))
+        self.marks[self.current][index] = dict(mark, rect=rect)
+        self.draw_page_marks()
+        page = self.doc[self.current].rect
+        width_mm = (rect[2] - rect[0]) * page.width / 2.83465
+        height_mm = (rect[3] - rect[1]) * page.height / 2.83465
+        self.lbl_status.configure(text=f"Tamanho: {width_mm:.0f} × {height_mm:.0f} mm")
+
+    def undo_marks(self):
+        if not self.history:
+            return
+        changes = self.history.pop()
+        for i, marks in changes.items():
+            self.marks[i] = marks
+        self.marks_changed(changes)
+
+    def clear_page_marks(self):
+        if self.marks[self.current]:
+            self.push_history([self.current])
+            self.marks[self.current] = []
+            self.marks_changed([self.current])
+
+    def repeat_marks_on_all(self):
+        source = self.marks[self.current] or next((m for m in self.marks if m), None)
+        if not source:
+            messagebox.showinfo("Aviso", "Marque algo em uma página primeiro." if self.tool_name == ERASER_TOOL
+                                else "Coloque a imagem em uma página primeiro.")
+            return
+        pages = [i for i in range(self.page_count) if any(m not in self.marks[i] for m in source)]
+        if not pages:
+            return
+        self.push_history(pages)
+        for i in pages:
+            self.marks[i] = self.marks[i] + [m for m in source if m not in self.marks[i]]
+        self.marks_changed(pages)
+
+    def marks_changed(self, pages):
+        for i in pages:
+            self.draw_thumb_marks(i)
+        self.draw_page_marks()
+        total = sum(len(m) for m in self.marks)
+        if not total:
+            text = self.default_hint()
+        elif self.tool_name == IMAGE_TOOL:
+            text = f"{total} imagem(ns) · botão direito remove"
+        else:
+            text = f"{total} área(s) · botão direito remove"
+        self.lbl_status.configure(text=text)
+
+    def mark_photo(self, path, w, h):
+        """Imagem redimensionada para caber em w × h, mantendo a proporção (como no PDF final)."""
+        key = (path, w, h)
+        if key not in self.mark_photos:
+            if len(self.mark_photos) > 40:
+                self.mark_photos.clear()
+            img = self.load_image(path)
+            scale = min(w / img.width, h / img.height)
+            size = (max(int(img.width * scale), 1), max(int(img.height * scale), 1))
+            # durante o redimensionamento usa um filtro mais rápido
+            fast = bool(self.mark_drag and "resize" in self.mark_drag)
+            resized = img.resize(size, Image.BILINEAR, reducing_gap=2.0) if fast else img.resize(size, Image.LANCZOS)
+            buf = io.BytesIO()
+            resized.save(buf, format="PNG")
+            self.mark_photos[key] = tk.PhotoImage(master=self, data=base64.b64encode(buf.getvalue()))
+        return self.mark_photos[key]
+
+    def draw_page_marks(self, preview=None):
+        canvas = self.page_canvas
+        canvas.delete("marks")
+        if self.tool_name not in MARK_TOOLS or not self.image_box:
+            return
+        x, y, w, h = self.image_box
+        for mark in self.marks[self.current]:
+            r = mark["rect"]
+            x0, y0, x1, y1 = x + r[0] * w, y + r[1] * h, x + r[2] * w, y + r[3] * h
+            if mark["image"]:
+                photo = self.mark_photo(mark["image"], max(int(x1 - x0), 1), max(int(y1 - y0), 1))
+                canvas.create_image((x0 + x1) / 2, (y0 + y1) / 2, image=photo, tags=("marks",))
+                canvas.create_rectangle(x0, y0, x1, y1, outline="#3B8ED0", dash=(4, 3), tags=("marks",))
+            else:
+                canvas.create_rectangle(x0, y0, x1, y1, fill="white", outline="#E5534B", dash=(4, 3), tags=("marks",))
+            color = "#3B8ED0" if mark["image"] else "#E5534B"
+            half = self.HANDLE_PX / 2
+            for hx, hy in ((x0, y0), (x1, y0), (x1, y1), (x0, y1)):
+                canvas.create_rectangle(hx - half, hy - half, hx + half, hy + half, fill="white", outline=color,
+                                        width=2, tags=("marks",))
+        if preview:
+            canvas.create_rectangle(x + preview[0] * w, y + preview[1] * h, x + preview[2] * w, y + preview[3] * h,
+                                    outline="#3B8ED0" if self.tool_name == IMAGE_TOOL else "#E5534B",
+                                    width=2, dash=(6, 4), tags=("marks",))
+
+    def draw_thumb_marks(self, i):
+        self.thumbs.delete(f"thumbmarks{i}")
+        geometry = self.thumb_geometry[i]
+        if not geometry:
+            return
+        x, y, w, h = geometry
+        for mark in self.marks[i]:
+            r = mark["rect"]
+            image = mark["image"] is not None
+            self.thumbs.create_rectangle(x + r[0] * w, y + r[1] * h, x + r[2] * w, y + r[3] * h,
+                                         fill="" if image else "white", outline="#3B8ED0" if image else "#E5534B",
+                                         tags=(f"thumbmarks{i}",))
+        self.thumbs.tag_raise("selection")
+
     def has_changes(self):
-        return any(self.rotations) or any(self.crops)
+        return any(self.rotations) or any(self.crops) or any(self.marks)
 
     def confirm_leave(self):
         if self.saving:
@@ -1781,6 +2106,18 @@ class VisualEditor(ctk.CTkFrame):
             arg = {i: r for i, r in enumerate(self.rotations) if r}
             if not arg:
                 messagebox.showwarning("Aviso", "Nenhuma página foi girada.")
+                return
+        elif self.tool_name == IMAGE_TOOL:
+            action = pdf_tools.insert_images_visual
+            arg = {i: [(m["image"], m["rect"]) for m in marks] for i, marks in enumerate(self.marks) if marks}
+            if not arg:
+                messagebox.showwarning("Aviso", "Nenhuma imagem foi colocada no PDF.")
+                return
+        elif self.tool_name == ERASER_TOOL:
+            action = pdf_tools.erase_areas_visual
+            arg = {i: [m["rect"] for m in marks] for i, marks in enumerate(self.marks) if marks}
+            if not arg:
+                messagebox.showwarning("Aviso", "Nenhuma área marcada para apagar.")
                 return
         else:
             action = pdf_tools.crop_pdf_visual
@@ -1859,6 +2196,10 @@ TOOL_GROUPS = (
         "Numerar Páginas": ("Insira números de página", pdf_tools.number_pages, NumberPagesOptions),
         "Girar PDF": ("Gire as páginas visualmente", None, None),
         "Cortar PDF": ("Corte as áreas visualmente", None, None),
+    }),
+    ("Editar", {
+        IMAGE_TOOL: ("Coloque assinatura, carimbo ou logo", None, None),
+        ERASER_TOOL: ("Apague trechos do PDF de verdade", None, None),
     }),
     ("Converter", {
         "Imagens para PDF": ("Converta imagens em PDF", pdf_tools.images_to_pdf, OutputFilenameOptions),

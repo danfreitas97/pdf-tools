@@ -30,6 +30,13 @@ Não precisa instalar nada, nem baixar qualquer outro programa. É um arquivo ú
 | **Girar PDF** | Endireita páginas que foram digitalizadas de lado. Você vê como vai ficar antes de salvar |
 | **Cortar PDF** | Recorta só o pedaço da página que interessa, desenhando com o mouse |
 
+### Editar o conteúdo
+
+| | |
+|---|---|
+| **Inserir Imagem** | Coloca uma assinatura, carimbo ou logo onde você clicar. Dá para arrastar para mudar de lugar, puxar pelos cantos para aumentar ou diminuir (sem deformar a imagem) e repetir em todas as páginas |
+| **Modo Borracha** | Apaga trechos da página passando um retângulo por cima. O conteúdo é removido de verdade, não só coberto: ninguém consegue copiar ou recuperar o texto apagado |
+
 ### Converter e reduzir
 
 | | |

@@ -409,6 +409,62 @@ def crop_pdf_visual(input_file, output_dir, crop_boxes_dict):
         doc.save(str(out_file), garbage=4, deflate=True)
     return out_file
 
+def _visible_rect(page, rel_box):
+    """Converte coordenadas relativas da página como é vista para o sistema não rotacionado."""
+    w, h = page.rect.width, page.rect.height
+    rel_x0, rel_y0, rel_x1, rel_y1 = rel_box
+    return pymupdf.Rect(rel_x0 * w, rel_y0 * h, rel_x1 * w, rel_y1 * h) * page.derotation_matrix
+
+def _image_stream(image_path):
+    """Lê a imagem já endireitada pela orientação EXIF, em formato aceito pelo PDF."""
+    with Image.open(image_path) as im:
+        if im.format in ("JPEG", "PNG") and im.getexif().get(0x0112, 1) == 1:
+            return Path(image_path).read_bytes()
+        oriented = ImageOps.exif_transpose(im)
+        buf = io.BytesIO()
+        oriented.save(buf, format="PNG")
+        return buf.getvalue()
+
+def insert_images_visual(input_file, output_dir, placements_dict):
+    """Insere imagens nas áreas marcadas. placements_dict: página -> [(caminho_imagem, caixa_relativa)]."""
+    pdf = Path(input_file)
+    streams = {}
+    with pymupdf.open(str(pdf)) as doc:
+        xrefs = {}
+        for i, placements in placements_dict.items():
+            if i >= doc.page_count:
+                continue
+            page = doc[i]
+            for image_path, box in placements:
+                if image_path not in streams:
+                    streams[image_path] = _image_stream(image_path)
+                # reaproveita a mesma imagem embutida em todas as páginas
+                xref = page.insert_image(_visible_rect(page, box), stream=streams[image_path],
+                                         xref=xrefs.get(image_path, 0), rotate=page.rotation)
+                xrefs[image_path] = xref
+
+        out_file = Path(output_dir) / f"{pdf.stem}_com_imagem.pdf"
+        doc.save(str(out_file), garbage=4, deflate=True)
+    return out_file
+
+def erase_areas_visual(input_file, output_dir, areas_dict):
+    """Apaga de fato o conteúdo das áreas marcadas e as pinta de branco. areas_dict: página -> [caixa_relativa]."""
+    pdf = Path(input_file)
+    with pymupdf.open(str(pdf)) as doc:
+        for i, boxes in areas_dict.items():
+            if i >= doc.page_count:
+                continue
+            page = doc[i]
+            for box in boxes:
+                page.add_redact_annot(_visible_rect(page, box), fill=(1, 1, 1))
+            # remove texto, pixels de imagem e desenhos totalmente cobertos (o resto fica sob o branco)
+            page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_PIXELS,
+                                  graphics=pymupdf.PDF_REDACT_LINE_ART_REMOVE_IF_COVERED)
+
+        out_file = Path(output_dir) / f"{pdf.stem}_apagado.pdf"
+        doc.save(str(out_file), garbage=4, deflate=True)
+    return out_file
+
 def pdf_to_images(input_files, output_dir, progress_callback=None, cancel_event=None):
     """Converte páginas de PDF em imagens PNG."""
     errors = []
