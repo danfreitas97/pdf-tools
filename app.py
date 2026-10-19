@@ -11,6 +11,7 @@ import re
 import subprocess
 import sys
 import threading
+import webbrowser
 from pathlib import Path
 import darkdetect
 from PIL import Image, ImageOps
@@ -31,6 +32,8 @@ MARK_TOOLS = [IMAGE_TOOL, ERASER_TOOL]
 SINGLE_FILE_TOOLS = ["Girar PDF", "Cortar PDF"] + MARK_TOOLS
 ALLOW_PROTECTED_TOOLS = ["Remover Senha"]
 OUTPUT_FILE_TOOLS = ["Juntar PDFs", "Imagens para PDF"]
+SIGNATURE_TOOL = "Verificar Assinaturas"
+NO_OUTPUT_TOOLS = [SIGNATURE_TOOL]
 DROP_HIGHLIGHT = ("#3B8ED0", "#1F6AA5")
 LIST_BG = ("#EBEBEB", "#2B2B2B")
 DANGER = ("#D9534F", "#C9302C")
@@ -383,6 +386,8 @@ class ToolView(ctk.CTkFrame):
 
         self.lbl_out_dir = ctk.CTkLabel(self.out_frame, text="", anchor="w")
         self.lbl_out_dir.pack(side="left", padx=10, fill="x", expand=True)
+        if self.tool_name in NO_OUTPUT_TOOLS:
+            self.out_frame.grid_remove()  # só lê os arquivos, não gera nada
 
         self.extra_options_frame = None
         if extra_options_widget:
@@ -395,7 +400,7 @@ class ToolView(ctk.CTkFrame):
                 except Exception:
                     pass
 
-        self.process_text = "Abrir Editor Visual" if self.single_file else "Processar"
+        self.process_text = "Abrir Editor Visual" if self.single_file else "Verificar" if tool_name in NO_OUTPUT_TOOLS else "Processar"
         self.btn_process = ctk.CTkButton(self, text=self.process_text, font=ctk.CTkFont(size=16, weight="bold"), height=40, width=180, command=self.process)
         self.btn_process.grid(row=5, column=0, pady=10)
         self.process_colors = (self.btn_process.cget("fg_color"), self.btn_process.cget("hover_color"))
@@ -560,8 +565,8 @@ class ToolView(ctk.CTkFrame):
 
         def worker():
             try:
-                errors = action(files, str(out_path), progress_callback=self.update_progress, cancel_event=cancel_event, **kwargs)
-                self.app.post(lambda: self.on_finished(errors, out_path))
+                result = action(files, str(out_path), progress_callback=self.update_progress, cancel_event=cancel_event, **kwargs)
+                self.app.post(lambda: self.on_finished(result, out_path))
             except pdf_tools.Cancelled:
                 self.app.post(self.on_cancelled)
             except Exception as e:
@@ -591,21 +596,33 @@ class ToolView(ctk.CTkFrame):
         self.last_output = path
         self.btn_open_output.grid(row=0, column=1, padx=(10, 0))
 
-    def on_finished(self, errors, out_path):
+    def on_finished(self, result, out_path):
+        """result é a lista de erros, ou um dicionário com 'errors' e, opcionalmente,
+        'warning' (texto a mostrar na hora) e 'results' (assinaturas verificadas)."""
+        if not isinstance(result, dict):
+            result = {"errors": result}
+        errors = result.get("errors") or []
         self.set_running(False)
         self.progressbar.set(1)
-        self.show_open_output(out_path)
+        if self.tool_name not in NO_OUTPUT_TOOLS:
+            self.show_open_output(out_path)
         if errors:
             status = self.lbl_status.cget("text")
             self.lbl_status.configure(text=f"{status}  ({len(errors)} arquivo(s) com erro)")
             msg = f"{len(errors)} arquivo(s) não puderam ser processados:\n\n" + "\n".join(errors)
             messagebox.showerror("Concluído com erros", msg)
+        if result.get("warning"):
+            messagebox.showwarning("Atenção antes de enviar", result["warning"])
+        if result.get("results") is not None:
+            SignatureReport(self.winfo_toplevel(), result["results"])
 
     def on_cancelled(self):
         self.set_running(False)
         self.progressbar.set(0)
         if self.tool_name in OUTPUT_FILE_TOOLS:
             self.lbl_status.configure(text="Cancelado. Nenhum arquivo foi gerado.")
+        elif self.tool_name in NO_OUTPUT_TOOLS:
+            self.lbl_status.configure(text="Cancelado.")
         else:
             self.lbl_status.configure(text="Cancelado. Os arquivos já gerados foram mantidos.")
             self.show_open_output(self.output_dir)
@@ -651,36 +668,54 @@ class SplitOptions(ctk.CTkFrame):
         self.rb_size = ctk.CTkRadioButton(self, text="Por Tamanho (MB)", variable=self.mode_var, value="size", command=self.on_mode_change)
         self.rb_size.grid(row=0, column=2, padx=10, pady=5, sticky="w")
 
+        self.rb_select = ctk.CTkRadioButton(self, text="Páginas Específicas", variable=self.mode_var, value="select", command=self.on_mode_change)
+        self.rb_select.grid(row=0, column=3, padx=10, pady=5, sticky="w")
+
         self.param_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.param_frame.grid(row=0, column=3, padx=10, pady=0, sticky="w")
+        self.param_frame.grid(row=1, column=0, columnspan=4, padx=10, pady=0, sticky="w")
 
         self.lbl_param = ctk.CTkLabel(self.param_frame, text="")
-        self.lbl_param.pack(side="left", padx=5)
+        self.lbl_param.pack(side="left", padx=(0, 5))
 
         self.entry_param = ctk.CTkEntry(self.param_frame, width=80)
         self.entry_param.pack(side="left", padx=5)
+
+        self.lbl_hint = ctk.CTkLabel(self.param_frame, text="", font=ctk.CTkFont(size=12, slant="italic"), text_color="gray")
+        self.lbl_hint.pack(side="left", padx=10)
 
         self.on_mode_change()
 
     def on_mode_change(self):
         mode = self.mode_var.get()
+        self.entry_param.delete(0, "end")
+        self.lbl_hint.configure(text="")
         if mode == "half":
             self.param_frame.grid_remove()
         elif mode == "pages":
             self.param_frame.grid()
             self.lbl_param.configure(text="Páginas por arquivo:")
-            self.entry_param.delete(0, "end")
+            self.entry_param.configure(width=80)
             self.entry_param.insert(0, "10")
         elif mode == "size":
             self.param_frame.grid()
             self.lbl_param.configure(text="Tamanho (MB):")
-            self.entry_param.delete(0, "end")
+            self.entry_param.configure(width=80)
             self.entry_param.insert(0, "5")
+        elif mode == "select":
+            self.param_frame.grid()
+            self.lbl_param.configure(text="Páginas:")
+            self.entry_param.configure(width=220)
+            self.lbl_hint.configure(text="Cada item vira um arquivo; entre parênteses ficam juntas.\n"
+                                         "Ex.: 5-10, (1, 5, 8, 10), 9 gera 3 arquivos.", justify="left")
 
     def get_values(self):
         mode = self.mode_var.get()
         val = 0
-        if mode in ["pages", "size"]:
+        if mode == "select":
+            val = self.entry_param.get().strip()
+            if not val:
+                raise ValueError("Informe as páginas (ex.: 5-10, (1, 5, 8, 10), 9).")
+        elif mode in ["pages", "size"]:
             field = "Páginas por arquivo" if mode == "pages" else "Tamanho (MB)"
             val = parse_number(self.entry_param.get(), field, 10 if mode == "pages" else 5)
             if val <= 0:
@@ -688,12 +723,13 @@ class SplitOptions(ctk.CTkFrame):
         return {"split_mode": mode, "split_param": val}
 
     def load_values(self, values):
-        if values.get("split_mode") in ("half", "pages", "size"):
+        if values.get("split_mode") in ("half", "pages", "size", "select"):
             self.mode_var.set(values["split_mode"])
             self.on_mode_change()
             if values["split_mode"] != "half":
                 self.entry_param.delete(0, "end")
-                self.entry_param.insert(0, format_number(float(values["split_param"])))
+                param = values["split_param"]
+                self.entry_param.insert(0, param if isinstance(param, str) else format_number(float(param)))
 
 class CompressOptions(ctk.CTkFrame):
     LEVELS = ["Muito Baixa", "Baixa", "Média", "Alta", "Muito Alta"]
@@ -1024,6 +1060,34 @@ class GrayscaleOptions(ctk.CTkFrame):
             self.entry_dpi.insert(0, format_number(float(values["dpi"])))
 
 
+class PdfaOptions(ctk.CTkFrame):
+    PARTS = {"PDF/A-2b (recomendado)": 2, "PDF/A-1b (sistemas antigos)": 1, "PDF/A-3b (com anexos)": 3}
+
+    def __init__(self, master):
+        super().__init__(master, fg_color="transparent")
+
+        row1 = ctk.CTkFrame(self, fg_color="transparent")
+        row1.grid(row=0, column=0, sticky="w")
+        ctk.CTkLabel(row1, text="Versão:").pack(side="left", padx=(5, 5))
+        self.part_menu = ctk.CTkOptionMenu(row1, width=220, values=list(self.PARTS))
+        self.part_menu.set("PDF/A-2b (recomendado)")
+        self.part_menu.pack(side="left")
+
+        ctk.CTkLabel(self, text="O conteúdo não é regravado: o PDF/A é anexado ao final do arquivo e assinaturas digitais "
+                                "continuam válidas. O que o original tiver de incompatível é listado em "
+                                f"{pdf_tools.PDFA_REPORT_NAME}.",
+                     font=ctk.CTkFont(size=12, slant="italic"), text_color="gray", wraplength=680, justify="left"
+                     ).grid(row=1, column=0, sticky="w", padx=5, pady=(4, 0))
+
+    def get_values(self):
+        return {"part": self.PARTS[self.part_menu.get()]}
+
+    def load_values(self, values):
+        for rotulo, valor in self.PARTS.items():
+            if valor == values.get("part"):
+                self.part_menu.set(rotulo)
+
+
 class MergeOptions(OutputFilenameOptions):
     """Opções para o arquivo mesclado com suporte a marcadores."""
 
@@ -1315,6 +1379,92 @@ class MarginPreview(ctk.CTkToplevel):
         except Exception:
             pass
         self.destroy()
+
+
+class SignatureReport(ctk.CTkToplevel):
+    """Janela com o resultado da verificação de assinaturas digitais."""
+    TONES = {"ok": ("#1E7B34", "#3FB950"), "warn": ("#9A6700", "#D29922"), "bad": ("#C9302C", "#F85149")}
+    ICONS = {"ok": "✔", "warn": "⚠", "bad": "✖"}
+    ITI_URL = "https://validar.iti.gov.br"
+
+    def __init__(self, master, results):
+        super().__init__(master)
+        self.title("Verificação de assinaturas")
+        self.geometry("780x640")
+        self.transient(master)
+        self.results = results
+
+        area = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        area.pack(expand=True, fill="both", padx=16, pady=(16, 8))
+
+        for entry in results:
+            ctk.CTkLabel(area, text=entry["file"], font=ctk.CTkFont(size=16, weight="bold"),
+                         anchor="w").pack(fill="x", padx=4, pady=(10, 4))
+            if entry["error"]:
+                ctk.CTkLabel(area, text=f"{self.ICONS['bad']}  Não foi possível verificar: {entry['error']}",
+                             text_color=self.TONES["bad"], anchor="w").pack(fill="x", padx=4)
+            elif not entry["signatures"]:
+                ctk.CTkLabel(area, text="Nenhuma assinatura digital encontrada neste arquivo.",
+                             text_color="gray", anchor="w").pack(fill="x", padx=4)
+            for sig in entry["signatures"]:
+                self.add_card(area, sig)
+
+        ctk.CTkLabel(self, text="Esta verificação mostra as assinaturas e confirma que o documento não foi alterado "
+                                "depois delas. Ela não confirma a identidade de quem assinou: os nomes aparecem como "
+                                "estão no certificado. Para confirmar, use um validador oficial: validar.iti.gov.br "
+                                "(certificados ICP-Brasil e assinaturas gov.br) ou o Adobe Acrobat Reader (demais).",
+                     font=ctk.CTkFont(size=12, slant="italic"), text_color="gray", wraplength=740, justify="left"
+                     ).pack(fill="x", padx=20, pady=(0, 6))
+
+        bar = ctk.CTkFrame(self, fg_color="transparent")
+        bar.pack(fill="x", padx=20, pady=(0, 15))
+        ctk.CTkButton(bar, text="Validar no ITI ↗", width=130, fg_color="transparent", border_width=1,
+                      text_color=("gray10", "gray90"), command=lambda: webbrowser.open(self.ITI_URL)).pack(side="left")
+        ctk.CTkButton(bar, text="Fechar", width=90, command=self.destroy).pack(side="right")
+        self.btn_copy = ctk.CTkButton(bar, text="Copiar relatório", width=130, command=self.copy_report)
+        self.btn_copy.pack(side="right", padx=10)
+
+        self.bind("<Escape>", lambda e: self.destroy())
+        self.after(120, self.lift)
+        self.after(140, self.focus_force)
+
+    def add_card(self, master, sig):
+        card = ctk.CTkFrame(master, corner_radius=8)
+        card.pack(fill="x", padx=4, pady=4)
+        card.grid_columnconfigure(1, weight=1)
+
+        head = ctk.CTkFrame(card, fg_color="transparent")
+        head.grid(row=0, column=0, columnspan=2, sticky="w", padx=12, pady=(10, 6))
+        ctk.CTkLabel(head, text=f"  {self.ICONS[sig['verdict']]}  {sig['headline']}  ", fg_color=self.TONES[sig["verdict"]],
+                     text_color="white", corner_radius=6, font=ctk.CTkFont(weight="bold")).pack(side="left")
+        ctk.CTkLabel(head, text=sig["title"], text_color="gray").pack(side="left", padx=10)
+
+        for row, (label, text, tone) in enumerate(sig["rows"], start=1):
+            ctk.CTkLabel(card, text=label, text_color="gray", anchor="nw").grid(row=row, column=0, sticky="nw", padx=(12, 12))
+            colors = {"text_color": self.TONES[tone]} if tone else {}
+            ctk.CTkLabel(card, text=f"{self.ICONS[tone]}  {text}" if tone else text, anchor="w", justify="left",
+                         wraplength=520, **colors).grid(row=row, column=1, sticky="w", padx=(0, 12))
+        ctk.CTkFrame(card, height=8, fg_color="transparent").grid(row=len(sig["rows"]) + 1, column=0)
+
+    def report_text(self):
+        lines = ["VERIFICAÇÃO DE ASSINATURAS DIGITAIS",
+                 "Confere a integridade do documento; a identidade de quem assinou não foi confirmada.", ""]
+        for entry in self.results:
+            lines.append(entry["file"])
+            if entry["error"]:
+                lines.append(f"  Não foi possível verificar: {entry['error']}")
+            elif not entry["signatures"]:
+                lines.append("  Nenhuma assinatura digital encontrada.")
+            for sig in entry["signatures"]:
+                lines.append(f"  [{sig['headline']}] {sig['title']}")
+                lines.extend(f"    {label}: {text}" for label, text, _ in sig["rows"])
+            lines.append("")
+        return "\n".join(lines)
+
+    def copy_report(self):
+        self.clipboard_clear()
+        self.clipboard_append(self.report_text())
+        self.btn_copy.configure(text="Copiado ✔")
 
 
 class VisualEditor(ctk.CTkFrame):
@@ -2206,6 +2356,7 @@ TOOL_GROUPS = (
         "PDF para Imagens": ("Extraia páginas como imagens", pdf_tools.pdf_to_images, None),
         "Tons de Cinza": ("Converta para cinza e economize toner", pdf_tools.grayscale_pdfs, GrayscaleOptions),
         "Comprimir": ("Reduza o tamanho do PDF", pdf_tools.compress_pdfs, CompressOptions),
+        "Converter para PDF/A": ("Formato de arquivamento, sem perder assinaturas", pdf_tools.convert_pdfa, PdfaOptions),
     }),
     ("Impressão", {
         "Adicionar Margens": ("Adicione bordas brancas", pdf_tools.add_margins, MarginsOptions),
@@ -2217,6 +2368,7 @@ TOOL_GROUPS = (
         "Remover Senha": ("Tire a proteção de PDFs cuja senha você tem", pdf_tools.unlock_pdfs, UnlockOptions),
         "Marca d'Água": ("Carimbe um texto sobre as páginas", pdf_tools.watermark_pdfs, WatermarkOptions),
         "Limpar Metadados": ("Remova autor e histórico do arquivo", pdf_tools.clean_metadata, None),
+        SIGNATURE_TOOL: ("Veja as assinaturas e se o PDF foi alterado", pdf_tools.verify_signatures, None),
     }),
 )
 

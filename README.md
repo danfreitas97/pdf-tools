@@ -24,7 +24,7 @@ Não precisa instalar nada, nem baixar qualquer outro programa. É um arquivo ú
 | | |
 |---|---|
 | **Juntar PDFs** | Vários arquivos viram um só, na ordem que você escolher. O resultado já vem com um índice, com o nome de cada documento que entrou |
-| **Dividir PDF** | Separa um arquivo grande em partes menores |
+| **Dividir PDF** | Separa um arquivo grande em partes menores: pela metade, a cada tantas páginas, por tamanho em MB ou pelas páginas que você digitar. Em `5-10, (1, 5, 8, 10), 9`, cada item vira um arquivo, e as páginas entre parênteses ficam juntas no mesmo |
 | **Páginas** | Tira as páginas que você não quer, separa só as que interessam, ou muda a ordem delas |
 | **Numerar Páginas** | Coloca o número em cada página. Dá para pular a capa e escolher onde o número aparece |
 | **Girar PDF** | Endireita páginas que foram digitalizadas de lado. Você vê como vai ficar antes de salvar |
@@ -45,6 +45,7 @@ Não precisa instalar nada, nem baixar qualquer outro programa. É um arquivo ú
 | **PDF para Imagens** | Transforma cada página do PDF em uma imagem |
 | **Tons de Cinza** | Tira as cores para gastar menos tinta na impressão |
 | **Comprimir** | Deixa o arquivo mais leve, para caber no e-mail ou no site que só aceita 5 MB |
+| **Converter para PDF/A** | Deixa o PDF no formato de arquivamento que muitos órgãos públicos e tribunais pedem. O documento não é regravado: o que o PDF/A exige é acrescentado ao final do arquivo, então **assinaturas digitais continuam válidas**. Se o original tiver algo que o PDF/A não aceita (como fontes não embutidas), o programa avisa na hora, antes de você enviar, em vez de mexer no conteúdo |
 
 ### Preparar para imprimir
 
@@ -62,6 +63,7 @@ Não precisa instalar nada, nem baixar qualquer outro programa. É um arquivo ú
 | **Remover Senha** | Tira a senha de um arquivo protegido, desde que você saiba qual é |
 | **Marca d'Água** | Carimba CONFIDENCIAL, CÓPIA, RASCUNHO ou o texto que você quiser por cima das páginas |
 | **Limpar Metadados** | Todo PDF guarda escondido o nome de quem criou e com qual programa. Isso apaga esses rastros antes de você mandar o arquivo para fora |
+| **Verificar Assinaturas** | Mostra as assinaturas digitais do PDF, com o nome de quem assinou, a data e quem emitiu o certificado, e confere se o documento foi alterado depois de assinado. Ele não confirma a identidade de quem assinou; para isso, use um validador oficial, como o [validar.iti.gov.br](https://validar.iti.gov.br) (ICP-Brasil e gov.br) ou o Adobe Acrobat Reader |
 
 Você pode arrastar os arquivos direto para dentro do programa, trabalhar com vários de uma vez, e cancelar no meio se mudar de ideia. Tem tema claro e escuro.
 
@@ -80,7 +82,7 @@ Não. Pode processar cem arquivos de uma vez se o seu computador der conta.
 É grátis, sem versão paga, sem anúncio e sem pedir cadastro. O código é aberto: qualquer pessoa pode verificar o que ele faz.
 
 **O programa mexe nos meus arquivos originais?**
-Não. Ele sempre cria arquivos novos, com um nome diferente. O original fica como estava.
+Não. Ele sempre cria arquivos novos, com um nome diferente. O original fica como estava. E se você fizer a mesma operação duas vezes, o resultado anterior também não é substituído: o novo vira `contrato_cortado (1).pdf`, depois `(2)`, e assim por diante.
 
 **Funciona em Mac ou Linux?**
 O arquivo pronto (.exe) é só para Windows. Em outros sistemas dá para rodar pelo código-fonte (instruções no final).
@@ -96,7 +98,7 @@ Livre para usar, copiar e modificar, inclusive em empresa. Veja [LICENSE](LICENS
 
 ## Para quem programa
 
-Feito em Python com PyMuPDF, pypdf, Pillow e CustomTkinter, empacotado com PyInstaller.
+Feito em Python com PyMuPDF, pypdf, pyHanko, Pillow e CustomTkinter, empacotado com PyInstaller.
 
 ```bash
 git clone https://github.com/danfreitas97/pdf-tools.git

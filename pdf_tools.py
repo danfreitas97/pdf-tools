@@ -1,8 +1,10 @@
 import io
 import math
+import os
 import re
 import shutil
 from pathlib import Path
+from xml.sax.saxutils import escape as xml_escape
 from pypdf import PdfWriter, PdfReader
 from pypdf.constants import UserAccessPermissions
 from PIL import Image, ImageOps, ImageChops
@@ -38,6 +40,15 @@ def _output_stems(input_files):
         seen.add(stem.lower())
         stems.append(stem)
     return stems
+
+def _free_path(path):
+    """Nunca sobrescreve: se o arquivo já existe, usa 'nome (1).pdf', 'nome (2).pdf'..."""
+    path = Path(path)
+    candidate, n = path, 1
+    while candidate.exists():
+        candidate = path.with_name(f"{path.stem} ({n}){path.suffix}")
+        n += 1
+    return candidate
 
 def _pages_to_bytes(reader, page_numbers):
     writer = PdfWriter()
@@ -87,8 +98,15 @@ def split_pdfs(input_files, output_dir, split_mode="half", split_param=None, pro
         try:
             reader = PdfReader(str(pdf))
             num_pages = len(reader.pages)
-            if num_pages < 2:
+            if num_pages < 2 and split_mode != "select":
                 errors.append(f"{pdf.name}: possui apenas {num_pages} página(s), não há o que dividir")
+                continue
+
+            if split_mode == "select":
+                for label, pages in parse_split_groups(split_param, num_pages):
+                    _check_cancel(cancel_event)
+                    out_file = _free_path(Path(output_dir) / f"{stem}_pag_{label}.pdf")
+                    out_file.write_bytes(_pages_to_bytes(reader, pages))
                 continue
 
             if split_mode == "half":
@@ -130,7 +148,7 @@ def split_pdfs(input_files, output_dir, split_mode="half", split_param=None, pro
 
             for part, page_range in enumerate(ranges, start=1):
                 _check_cancel(cancel_event)
-                out_file = Path(output_dir) / f"{stem}_parte{part}.pdf"
+                out_file = _free_path(Path(output_dir) / f"{stem}_parte{part}.pdf")
                 out_file.write_bytes(_pages_to_bytes(reader, page_range))
 
         except Exception as e:
@@ -230,7 +248,7 @@ def compress_pdfs(input_files, output_dir, compression_level="Média", max_dpi=0
                     except Exception:
                         pass
 
-            out_file = Path(output_dir) / f"{stem}_comprimido.pdf"
+            out_file = _free_path(Path(output_dir) / f"{stem}_comprimido.pdf")
             buf = io.BytesIO()
             writer.write(buf)
             original_size = pdf.stat().st_size
@@ -367,7 +385,7 @@ def add_margins(input_files, output_dir, margin_left_mm=15, margin_right_mm=15,
                     if progress_callback and n_pages > 20 and p_num % 10 == 9:
                         progress_callback(i, total, f"Adicionando margens em {pdf.name} ({p_num + 1}/{n_pages})...")
 
-                out_file = Path(output_dir) / f"{stem}_margens.pdf"
+                out_file = _free_path(Path(output_dir) / f"{stem}_margens.pdf")
                 out_doc.save(str(out_file), garbage=4, deflate=True)
         except Exception as e:
             errors.append(f"{pdf.name}: {e}")
@@ -384,7 +402,7 @@ def rotate_pdf_visual(input_file, output_dir, rotations_dict):
         if angle != 0:
             page.rotate(angle)
 
-    out_file = Path(output_dir) / f"{pdf.stem}_rotacionado.pdf"
+    out_file = _free_path(Path(output_dir) / f"{pdf.stem}_rotacionado.pdf")
     with open(out_file, "wb") as f:
         writer.write(f)
     return out_file
@@ -405,7 +423,7 @@ def crop_pdf_visual(input_file, output_dir, crop_boxes_dict):
                 rect = rect + (page.cropbox.x0, page.cropbox.y0, page.cropbox.x0, page.cropbox.y0)
                 page.set_cropbox(rect & page.mediabox)
 
-        out_file = Path(output_dir) / f"{pdf.stem}_cortado.pdf"
+        out_file = _free_path(Path(output_dir) / f"{pdf.stem}_cortado.pdf")
         doc.save(str(out_file), garbage=4, deflate=True)
     return out_file
 
@@ -443,7 +461,7 @@ def insert_images_visual(input_file, output_dir, placements_dict):
                                          xref=xrefs.get(image_path, 0), rotate=page.rotation)
                 xrefs[image_path] = xref
 
-        out_file = Path(output_dir) / f"{pdf.stem}_com_imagem.pdf"
+        out_file = _free_path(Path(output_dir) / f"{pdf.stem}_com_imagem.pdf")
         doc.save(str(out_file), garbage=4, deflate=True)
     return out_file
 
@@ -461,7 +479,7 @@ def erase_areas_visual(input_file, output_dir, areas_dict):
             page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_PIXELS,
                                   graphics=pymupdf.PDF_REDACT_LINE_ART_REMOVE_IF_COVERED)
 
-        out_file = Path(output_dir) / f"{pdf.stem}_apagado.pdf"
+        out_file = _free_path(Path(output_dir) / f"{pdf.stem}_apagado.pdf")
         doc.save(str(out_file), garbage=4, deflate=True)
     return out_file
 
@@ -481,7 +499,7 @@ def pdf_to_images(input_files, output_dir, progress_callback=None, cancel_event=
                     _check_cancel(cancel_event)
                     page = doc.load_page(page_num)
                     pix = page.get_pixmap(dpi=150)
-                    out_file = Path(output_dir) / f"{stem}_pag_{page_num+1}.png"
+                    out_file = _free_path(Path(output_dir) / f"{stem}_pag_{page_num+1}.png")
                     pix.save(str(out_file))
         except Exception as e:
             errors.append(f"{pdf.name}: {e}")
@@ -496,7 +514,7 @@ def parse_page_ranges(spec, n_pages):
         raise ValueError("Informe as páginas (ex.: 1-3, 5, 8-).")
 
     pages = []
-    for part in spec.replace(";", ",").split(","):
+    for part in spec.replace(";", ",").replace("(", "").replace(")", "").split(","):
         part = part.strip()
         if not part:
             continue
@@ -520,6 +538,31 @@ def parse_page_ranges(spec, n_pages):
     if not pages:
         raise ValueError("Nenhuma página selecionada.")
     return pages
+
+def parse_split_groups(spec, n_pages):
+    """Divide '5-10, (1, 5, 8, 10), 9' em grupos de páginas, um por arquivo de saída.
+    Cada item separado por vírgula vira um arquivo; páginas entre parênteses ficam juntas no mesmo."""
+    if not spec or not spec.strip():
+        raise ValueError("Informe as páginas (ex.: 5-10, (1, 5, 8, 10), 9).")
+    if re.search(r"\([^)]*\(|\)[^(]*\)", spec) or spec.count("(") != spec.count(")"):
+        raise ValueError("Parênteses não fecham direito. Use algo como 5-10, (1, 5, 8, 10), 9.")
+
+    item = r"\(([^()]*)\)|([^,;()]+)"
+    leftover = re.sub(item, "", spec)
+    if leftover.strip(" ,;"):
+        raise ValueError(f"Trecho inválido: '{leftover.strip(' ,;')}'. Use algo como 5-10, (1, 5, 8, 10), 9.")
+
+    groups = []
+    for m in re.finditer(item, spec):
+        text = m.group(1) if m.group(1) is not None else m.group(2)
+        if not text.strip():
+            continue
+        pages = parse_page_ranges(text, n_pages)
+        label = "_".join(re.sub(r"\s+", "", p.replace("–", "-")) for p in re.split(r"[,;]", text) if p.strip())
+        groups.append((label[:60], pages))
+    if not groups:
+        raise ValueError("Nenhuma página selecionada.")
+    return groups
 
 def select_pages(input_files, output_dir, pages_spec="", mode="extract",
                  progress_callback=None, cancel_event=None):
@@ -549,7 +592,7 @@ def select_pages(input_files, output_dir, pages_spec="", mode="extract",
                 _check_cancel(cancel_event)
                 writer.add_page(reader.pages[j])
 
-            out_file = Path(output_dir) / f"{stem}_{suffix}.pdf"
+            out_file = _free_path(Path(output_dir) / f"{stem}_{suffix}.pdf")
             with open(out_file, "wb") as fh:
                 writer.write(fh)
         except Exception as e:
@@ -611,7 +654,7 @@ def impose_pdfs(input_files, output_dir, layout="2up", sheet_size="a4",
                         src = doc[page_no - 1]
                         sheet.show_pdf_page(_fit_centered(src.rect, half), doc, page_no - 1)
 
-                out_file = Path(output_dir) / f"{stem}_{suffix}.pdf"
+                out_file = _free_path(Path(output_dir) / f"{stem}_{suffix}.pdf")
                 out_doc.save(str(out_file), garbage=4, deflate=True)
         except Exception as e:
             errors.append(f"{pdf.name}: {e}")
@@ -762,7 +805,7 @@ def protect_pdfs(input_files, output_dir, password="", allow_printing=True, allo
                 perms &= ~UserAccessPermissions.EXTRACT_TEXT_AND_GRAPHICS
             writer.encrypt(user_password=password, permissions_flag=perms, algorithm="AES-256")
 
-            out_file = Path(output_dir) / f"{stem}_protegido.pdf"
+            out_file = _free_path(Path(output_dir) / f"{stem}_protegido.pdf")
             with open(out_file, "wb") as fh:
                 writer.write(fh)
         except Exception as e:
@@ -789,7 +832,7 @@ def unlock_pdfs(input_files, output_dir, password="", progress_callback=None, ca
 
             writer = PdfWriter()
             writer.append(reader)
-            out_file = Path(output_dir) / f"{stem}_sem_senha.pdf"
+            out_file = _free_path(Path(output_dir) / f"{stem}_sem_senha.pdf")
             with open(out_file, "wb") as fh:
                 writer.write(fh)
         except Exception as e:
@@ -815,7 +858,7 @@ def clean_metadata(input_files, output_dir, progress_callback=None, cancel_event
                     raise ValueError("protegido por senha")
                 doc.del_xml_metadata()
                 doc.set_metadata({})
-                out_file = Path(output_dir) / f"{stem}_sem_metadados.pdf"
+                out_file = _free_path(Path(output_dir) / f"{stem}_sem_metadados.pdf")
                 doc.save(str(out_file), garbage=4, deflate=True)
         except Exception as e:
             errors.append(f"{pdf.name}: {e}")
@@ -854,7 +897,7 @@ def grayscale_pdfs(input_files, output_dir, dpi=200, progress_callback=None, can
                     if progress_callback and n_pages > 20 and p_num % 10 == 9:
                         progress_callback(i, total, f"Convertendo {pdf.name} ({p_num + 1}/{n_pages})...")
 
-                out_file = Path(output_dir) / f"{stem}_cinza.pdf"
+                out_file = _free_path(Path(output_dir) / f"{stem}_cinza.pdf")
                 out_doc.save(str(out_file), garbage=4, deflate=True)
         except Exception as e:
             errors.append(f"{pdf.name}: {e}")
@@ -916,7 +959,7 @@ def number_pages(input_files, output_dir, number_format="{n}", position="inferio
                     point = _number_point(page.rect, position, width, font_size, margin_pt)
                     page.insert_text(point, text, fontname="helv", fontsize=font_size, color=(0, 0, 0))
 
-                out_file = Path(output_dir) / f"{stem}_numerado.pdf"
+                out_file = _free_path(Path(output_dir) / f"{stem}_numerado.pdf")
                 doc.save(str(out_file), garbage=4, deflate=True)
         except Exception as e:
             errors.append(f"{pdf.name}: {e}")
@@ -979,7 +1022,7 @@ def watermark_pdfs(input_files, output_dir, text="CONFIDENCIAL", layout="diagona
                         writer.write_text(page, color=rgb, opacity=opacity,
                                           morph=(centre, pymupdf.Matrix(angle)))
 
-                out_file = Path(output_dir) / f"{stem}_marca.pdf"
+                out_file = _free_path(Path(output_dir) / f"{stem}_marca.pdf")
                 doc.save(str(out_file), garbage=4, deflate=True)
         except Exception as e:
             errors.append(f"{pdf.name}: {e}")
@@ -987,3 +1030,376 @@ def watermark_pdfs(input_files, output_dir, text="CONFIDENCIAL", layout="diagona
     if progress_callback:
         progress_callback(total, total, "Concluído!")
     return errors
+
+PDFA_REPORT_NAME = "relatorio_pdfa.txt"
+
+def _srgb_icc():
+    """Perfil de cor sRGB. O do Windows é ICC v2, aceito por todas as versões de PDF/A."""
+    windows = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32/spool/drivers/color/sRGB Color Space Profile.icm"
+    try:
+        return windows.read_bytes()
+    except OSError:
+        from PIL import ImageCms
+        return ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+
+def _xmp_date(pdf_date):
+    """Converte data no formato do PDF (D:20240131120000-03'00') para o formato do XMP."""
+    m = re.match(r"(?:D:)?(\d{4})(\d{2})?(\d{2})?(\d{2})?(\d{2})?(\d{2})?([Zz+-])?(\d{2})?'?(\d{2})?", pdf_date or "")
+    if not m:
+        return None
+    year, month, day, hour, minute, second, tz, tz_h, tz_m = m.groups()
+    text = year + (f"-{month}" if month else "") + (f"-{day}" if month and day else "")
+    if day and hour:
+        text += f"T{hour}:{minute or '00'}" + (f":{second}" if second else "")
+        if tz in ("Z", "z"):
+            text += "Z"
+        elif tz:
+            text += f"{tz}{tz_h or '00'}:{tz_m or '00'}"
+    return text
+
+def _pdfa_xmp(meta, part):
+    """Monta os metadados XMP que identificam o PDF/A, espelhando o dicionário Info do arquivo."""
+    def clean(value):
+        return xml_escape(re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", value))
+
+    fields = []
+    if meta.get("title"):
+        fields.append(f'<dc:title><rdf:Alt><rdf:li xml:lang="x-default">{clean(meta["title"])}</rdf:li></rdf:Alt></dc:title>')
+    if meta.get("author"):
+        fields.append(f'<dc:creator><rdf:Seq><rdf:li>{clean(meta["author"])}</rdf:li></rdf:Seq></dc:creator>')
+    if meta.get("subject"):
+        fields.append(f'<dc:description><rdf:Alt><rdf:li xml:lang="x-default">{clean(meta["subject"])}</rdf:li></rdf:Alt></dc:description>')
+    if meta.get("keywords"):
+        fields.append(f'<pdf:Keywords>{clean(meta["keywords"])}</pdf:Keywords>')
+    if meta.get("producer"):
+        fields.append(f'<pdf:Producer>{clean(meta["producer"])}</pdf:Producer>')
+    if meta.get("creator"):
+        fields.append(f'<xmp:CreatorTool>{clean(meta["creator"])}</xmp:CreatorTool>')
+    for key, tag in (("creationDate", "xmp:CreateDate"), ("modDate", "xmp:ModifyDate")):
+        date = _xmp_date(meta.get(key))
+        if date:
+            fields.append(f"<{tag}>{date}</{tag}>")
+
+    body = "".join(f"   {f}\n" for f in fields)
+    return (f'<?xpacket begin="\ufeff" id="W5M0MpCehiHzreSzNTczkc9d"?>\n'
+            f'<x:xmpmeta xmlns:x="adobe:ns:meta/">\n'
+            f' <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">\n'
+            f'  <rdf:Description rdf:about=""\n'
+            f'    xmlns:pdfaid="http://www.aiim.org/pdfa/ns/id/"\n'
+            f'    xmlns:dc="http://purl.org/dc/elements/1.1/"\n'
+            f'    xmlns:pdf="http://ns.adobe.com/pdf/1.3/"\n'
+            f'    xmlns:xmp="http://ns.adobe.com/xap/1.0/">\n'
+            f'   <pdfaid:part>{part}</pdfaid:part>\n'
+            f'   <pdfaid:conformance>B</pdfaid:conformance>\n'
+            f'{body}'
+            f'  </rdf:Description>\n'
+            f' </rdf:RDF>\n'
+            f'</x:xmpmeta>\n'
+            f'<?xpacket end="w"?>').encode("utf-8")
+
+def _certification_level(path):
+    """Nível de permissão (P) de um documento certificado, ou None se não for certificado."""
+    try:
+        root = PdfReader(str(path)).trailer["/Root"]
+        for ref in root["/Perms"]["/DocMDP"].get("/Reference", []):
+            params = ref.get_object().get("/TransformParams")
+            if params is not None:
+                return int(params.get_object().get("/P", 2))
+    except Exception:
+        pass
+    return None
+
+def _pdfa_issues(doc, part):
+    """Lista o que, no conteúdo original, impede a conformidade e não pode ser corrigido sem regravá-lo."""
+    issues = []
+    fonts = set()
+    for page in doc:
+        for font in page.get_fonts(full=True):
+            if font[1] == "n/a" and font[2] != "Type3":
+                fonts.add(font[3])
+    if fonts:
+        issues.append(f"{len(fonts)} fonte(s) não embutida(s): {', '.join(sorted(fonts)[:5])}")
+
+    objects = []
+    for xref in range(1, doc.xref_length()):
+        try:
+            objects.append(doc.xref_object(xref, compressed=True))
+        except Exception:
+            pass
+    objects = "\n".join(objects)
+
+    checks = [(r"/S\s*/(JavaScript|Launch|Sound|Movie|ResetForm|ImportData|Rendition)",
+               "contém scripts ou ações (JavaScript, abrir programas, sons) que o PDF/A proíbe"),
+              (r"/LZWDecode", "usa compressão LZW, proibida no PDF/A"),
+              (r"/DeviceCMYK", "usa cores CMYK sem perfil de cor (o perfil adicionado é RGB)")]
+    if part == 1:
+        checks += [(r"/SMask\s+\d|/S\s*/Transparency|/(CA|ca)\s+(0|0?\.\d+)\b",
+                    "usa transparência, proibida no PDF/A-1 (o PDF/A-2b aceita)"),
+                   (r"/JPXDecode", "usa imagens JPEG 2000, proibidas no PDF/A-1 (o PDF/A-2b aceita)"),
+                   (r"/Type\s*/(ObjStm|XRef)", "usa estrutura compactada do PDF 1.5, proibida no PDF/A-1 (o PDF/A-2b aceita)")]
+    issues.extend(msg for pattern, msg in checks if re.search(pattern, objects))
+
+    if doc.embfile_count() and part != 3:
+        issues.append(f"tem {doc.embfile_count()} arquivo(s) anexado(s): use PDF/A-3b, que permite anexos")
+    if "/ID" not in doc.pdf_trailer(compressed=True):
+        issues.append("não tem identificador de arquivo (/ID), exigido pelo PDF/A")
+    return issues
+
+def _add_pdfa_info(doc, part, icc):
+    """Adiciona metadados XMP e perfil de cor de saída, as duas peças que identificam um PDF/A."""
+    def new_object(source):
+        xref = doc.get_new_xref()
+        doc.update_object(xref, source)
+        return xref
+
+    meta_xref = new_object("<< /Type /Metadata /Subtype /XML >>")
+    doc.update_stream(meta_xref, _pdfa_xmp(doc.metadata or {}, part), new=True, compress=False)
+    cat = doc.pdf_catalog()
+    doc.xref_set_key(cat, "Metadata", f"{meta_xref} 0 R")
+
+    kind, intents = doc.xref_get_key(cat, "OutputIntents")
+    if kind == "xref":
+        intents = doc.xref_object(int(intents.split()[0]), compressed=True)
+        kind = "array" if intents.startswith("[") else "null"
+    refs = re.findall(r"(\d+)\s+0\s+R", intents) if kind == "array" else []
+    if any(doc.xref_get_key(int(r), "S")[1] == "/GTS_PDFA1" for r in refs):
+        return  # já tem perfil de saída para PDF/A
+
+    icc_xref = new_object("<< /N 3 >>")
+    doc.update_stream(icc_xref, icc, new=True)
+    intent = new_object("<< /Type /OutputIntent /S /GTS_PDFA1 /OutputConditionIdentifier (sRGB IEC61966-2.1) "
+                        f"/Info (sRGB IEC61966-2.1) /DestOutputProfile {icc_xref} 0 R >>")
+    doc.xref_set_key(cat, "OutputIntents", "[" + " ".join(f"{r} 0 R" for r in refs + [str(intent)]) + "]")
+
+def convert_pdfa(input_files, output_dir, part=2, progress_callback=None, cancel_event=None):
+    """Converte para PDF/A sem regravar o conteúdo: o original é mantido byte a byte e as
+    informações de PDF/A são anexadas ao final (atualização incremental), preservando assinaturas."""
+    icc = _srgb_icc()
+    errors = []
+    lines = [f"CONVERSÃO PARA PDF/A-{part}b", "=" * 60, ""]
+    warned = []
+    signed = 0
+    total = len(input_files)
+    for i, (pdf_path, stem) in enumerate(zip(input_files, _output_stems(input_files))):
+        _check_cancel(cancel_event)
+        pdf = Path(pdf_path)
+        if progress_callback:
+            progress_callback(i, total, f"Convertendo {pdf.name}...")
+
+        out_file = None
+        try:
+            original = pdf.read_bytes()
+            if _certification_level(pdf) == 1:
+                raise ValueError("é um documento certificado que não permite nenhuma alteração; "
+                                 "qualquer acréscimo invalidaria a certificação")
+
+            out_file = _free_path(Path(output_dir) / f"{stem}_pdfa.pdf")
+            out_file.write_bytes(original)
+            issues = []
+            with pymupdf.open(str(out_file)) as doc:
+                if doc.is_encrypted:
+                    raise ValueError("o PDF/A não permite arquivos protegidos por senha ou criptografados")
+                is_signed = doc.get_sigflags() > 0
+                n_pages = doc.page_count
+                declared = re.search(r"pdfaid:part\W{0,3}(\d)", doc.get_xml_metadata() or "")
+                if declared:
+                    status = f"já estava declarado como PDF/A-{declared.group(1)}; copiado sem alterações"
+                    if int(declared.group(1)) != part:
+                        issues.append(f"já era PDF/A-{declared.group(1)} e foi mantido assim, não virou PDF/A-{part}b "
+                                      "(mudar a versão exigiria regravar o documento)")
+                else:
+                    if not doc.can_save_incrementally():
+                        raise ValueError("a estrutura interna do arquivo está danificada e precisaria ser "
+                                         "regravada, o que alteraria o documento")
+                    issues = _pdfa_issues(doc, part)
+                    _add_pdfa_info(doc, part, icc)
+                    doc.saveIncr()
+                    status = f"convertido para PDF/A-{part}b"
+
+            # garantia: o arquivo original precisa continuar intacto no início do novo
+            if not out_file.read_bytes().startswith(original):
+                raise ValueError("a conversão alteraria o conteúdo original")
+            _verify_pdfa_output(out_file, n_pages, declared.group(1) if declared else str(part), check_intent=not declared)
+
+            signed += is_signed
+            if is_signed:
+                status += "; assinatura digital preservada"
+                if not declared:
+                    issues.append("tem assinatura digital: ela continua válida, mas validadores rigorosos podem "
+                                  "apontar que houve um acréscimo depois da assinatura (a própria conversão)")
+            lines.append(pdf.name)
+            lines.append(f"  [ok] {status}")
+            if issues:
+                warned.append((pdf.name, issues))
+                lines.append("  Atenção:")
+                lines.extend(f"  [!] {issue}" for issue in issues)
+            lines.append("")
+        except Exception as e:
+            if out_file:
+                out_file.unlink(missing_ok=True)
+            errors.append(f"{pdf.name}: {e} — nenhum arquivo foi gerado")
+
+    warning = None
+    if warned:
+        try:
+            (Path(output_dir) / PDFA_REPORT_NAME).write_text("\n".join(lines), encoding="utf-8")
+            where = f"Os detalhes foram salvos em {PDFA_REPORT_NAME}, na pasta de destino."
+        except OSError as e:
+            where = f"Não foi possível salvar {PDFA_REPORT_NAME}: {e}"
+        details = []
+        for name, issues in warned:
+            details.append(name)
+            details.extend(f"   • {issue}" for issue in issues)
+        if len(details) > 18:
+            details = details[:18] + ["   … e mais itens no relatório"]
+        warning = (f"{len(warned)} arquivo(s) foram gerados, mas verifique antes de enviar:\n\n"
+                   + "\n".join(details)
+                   + "\n\nItens como fontes não embutidas ou scripts fazem um validador de PDF/A recusar o arquivo. "
+                     "Corrigi-los exigiria regravar o conteúdo, o que invalidaria assinaturas digitais.\n\n" + where)
+
+    if progress_callback:
+        done = total - len(errors)
+        msg = f"Concluído! {done} de {total} arquivo(s) em PDF/A"
+        if signed:
+            msg += f", {signed} com assinatura preservada"
+        if warned:
+            msg += f" — {len(warned)} com avisos"
+        progress_callback(total, total, msg)
+    return {"errors": errors, "warning": warning}
+
+def _verify_pdfa_output(out_file, n_pages, part, check_intent=True):
+    """Reabre o arquivo gerado e confere se ele abre, tem as mesmas páginas e está declarado como PDF/A."""
+    try:
+        with pymupdf.open(str(out_file)) as doc:
+            ok_pages = doc.page_count == n_pages
+            ok_meta = re.search(rf"pdfaid:part\W{{0,3}}{part}", doc.get_xml_metadata() or "") is not None
+            ok_intent = not check_intent or "GTS_PDFA1" in doc.xref_object(doc.pdf_catalog(), compressed=True) or \
+                        "GTS_PDFA1" in "".join(doc.xref_object(int(r), compressed=True) for r in
+                                               re.findall(r"(\d+)\s+0\s+R", doc.xref_get_key(doc.pdf_catalog(), "OutputIntents")[1]))
+    except Exception as e:
+        raise ValueError(f"o arquivo gerado não pôde ser reaberto para conferência ({e})")
+    if not (ok_pages and ok_meta and ok_intent):
+        raise ValueError("o arquivo gerado não passou na conferência final "
+                         f"(páginas {'ok' if ok_pages else 'diferentes'}, identificação PDF/A "
+                         f"{'ok' if ok_meta else 'ausente'}, perfil de cor {'ok' if ok_intent else 'ausente'})")
+
+def _cert_name(name):
+    """Nome legível de um certificado (o CN, que no ICP-Brasil costuma ser 'NOME:CPF')."""
+    native = name.native
+    return native.get("common_name") or native.get("organization_name") or name.human_friendly
+
+def _format_dt(dt):
+    return dt.astimezone().strftime("%d/%m/%Y %H:%M") if dt else "—"
+
+MODIFICATION_TEXT = {
+    "NONE": ("ok", "Nenhuma alteração"),
+    "LTA_UPDATES": ("ok", "Só acréscimos técnicos (carimbos de tempo, dados de validação ou metadados)"),
+    "FORM_FILLING": ("ok", "Só outras assinaturas ou preenchimento de formulário"),
+    "ANNOTATIONS": ("warn", "Comentários ou anotações foram adicionados"),
+    "OTHER": ("warn", "Houve outros acréscimos (por exemplo, uma conversão para PDF/A). "
+                      "O conteúdo assinado continua intacto"),
+}
+
+def _describe_signature(embedded, status, index, count):
+    """Transforma o resultado da verificação em linhas para exibir: (rótulo, texto, tom).
+    Só confere a integridade; quem assinou é exibido como consta no certificado, sem confirmação."""
+    sig = embedded.sig_object
+    cert = status.signing_cert
+    certification = embedded.docmdp_level is not None
+
+    issuer = _cert_name(cert.issuer)
+    if cert.subject == cert.issuer:
+        issuer += " (o próprio assinante: certificado autoassinado)"
+    rows = [("Assinado por", _cert_name(cert.subject), None),
+            ("Emitido por", issuer, None)]
+    if status.timestamp_validity is not None:
+        rows.append(("Data", f"{_format_dt(status.timestamp_validity.timestamp)} (carimbo de tempo)", None))
+    else:
+        rows.append(("Data", f"{_format_dt(status.signer_reported_dt)} (informada pelo assinante)", None))
+    rows.append(("Validade do certificado", f"{_format_dt(cert.not_valid_before)} a {_format_dt(cert.not_valid_after)}", None))
+    for key, label in (("/Reason", "Motivo"), ("/Location", "Local")):
+        if sig.get(key):
+            rows.append((label, str(sig[key]), None))
+    if certification:
+        rows.append(("Tipo", "Certificação do documento (define o que pode mudar depois)", None))
+
+    intact = status.intact and status.valid
+    if intact:
+        rows.append(("Integridade", "O conteúdo assinado não foi alterado", "ok"))
+    elif not status.intact:
+        rows.append(("Integridade", "O conteúdo foi alterado depois de assinado", "bad"))
+    else:
+        rows.append(("Integridade", "A assinatura não confere com o certificado", "bad"))
+
+    tone = None
+    if status.intact:
+        level = getattr(status.modification_level, "name", "OTHER")
+        tone, text = MODIFICATION_TEXT.get(level, MODIFICATION_TEXT["OTHER"])
+        if certification and not status.docmdp_ok:
+            tone, text = "bad", "Houve alterações que o certificador não permitia"
+        rows.append(("Depois da assinatura", text, tone))
+
+    if not intact or tone == "bad":
+        verdict, headline = "bad", "QUEBRADA"
+    elif tone == "warn":
+        verdict, headline = "warn", "ÍNTEGRA, COM RESSALVAS"
+    else:
+        verdict, headline = "ok", "ÍNTEGRA"
+    return {"verdict": verdict, "headline": headline,
+            "title": f"Assinatura {index} de {count}" + (f" · campo {embedded.field_name}" if embedded.field_name else ""),
+            "rows": rows}
+
+def verify_signatures(input_files, output_dir=None, progress_callback=None, cancel_event=None):
+    """Lista as assinaturas digitais dos PDFs e confere se o conteúdo assinado continua intacto.
+    Não confirma a identidade de quem assinou: isso cabe a um validador oficial."""
+    import logging
+    from pyhanko.pdf_utils.reader import PdfFileReader
+    from pyhanko.sign.validation import validate_pdf_signature
+    from pyhanko_certvalidator import ValidationContext
+    logging.getLogger("pyhanko").setLevel(logging.CRITICAL)
+    logging.getLogger("pyhanko_certvalidator").setLevel(logging.CRITICAL)
+
+    results = []
+    errors = []
+    counts = {"ok": 0, "warn": 0, "bad": 0}
+    total = len(input_files)
+    for i, pdf_path in enumerate(input_files):
+        _check_cancel(cancel_event)
+        pdf = Path(pdf_path)
+        if progress_callback:
+            progress_callback(i, total, f"Verificando {pdf.name}...")
+
+        entry = {"file": pdf.name, "signatures": [], "error": None}
+        try:
+            with open(pdf, "rb") as fh:
+                reader = PdfFileReader(fh, strict=False)
+                if reader.encrypted:
+                    raise ValueError("o arquivo está protegido por senha")
+                embedded = reader.embedded_signatures
+                for n, sig in enumerate(embedded, start=1):
+                    _check_cancel(cancel_event)
+                    # sem lista de autoridades e sem internet: a cadeia não é avaliada, só a integridade
+                    context = ValidationContext(trust_roots=[], allow_fetching=False)
+                    try:
+                        status = validate_pdf_signature(sig, context)
+                        info = _describe_signature(sig, status, n, len(embedded))
+                    except Exception as e:
+                        info = {"verdict": "bad", "headline": "NÃO VERIFICADA",
+                                "title": f"Assinatura {n} de {len(embedded)}",
+                                "rows": [("Erro", f"Não foi possível ler esta assinatura: {e}", "bad")]}
+                    counts[info["verdict"]] += 1
+                    entry["signatures"].append(info)
+        except Exception as e:
+            entry["error"] = str(e)
+            errors.append(f"{pdf.name}: {e}")
+        results.append(entry)
+
+    if progress_callback:
+        found = sum(counts.values())
+        if found:
+            labels = {"ok": "íntegra(s)", "warn": "com ressalvas", "bad": "quebrada(s)"}
+            parts = [f"{counts[k]} {label}" for k, label in labels.items() if counts[k]]
+            progress_callback(total, total, f"Concluído! {found} assinatura(s): " + ", ".join(parts))
+        else:
+            progress_callback(total, total, "Concluído! Nenhuma assinatura digital encontrada.")
+    return {"errors": errors, "results": results}

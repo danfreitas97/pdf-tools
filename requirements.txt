@@ -7,3 +7,5 @@ customtkinter==6.0.0
 darkdetect==0.8.0
 tkinterdnd2==0.6.3
 cryptography==50.0.1  # exigida pelo pypdf para criptografia AES-256
+pyHanko==0.38.0  # verificação de assinaturas digitais
+pyhanko-certvalidator==0.33.0
