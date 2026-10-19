@@ -1300,12 +1300,16 @@ MODIFICATION_TEXT = {
                       "O conteúdo assinado continua intacto"),
 }
 
-def _describe_signature(embedded, status, index, count):
+CERTIFICATION_LEVELS = {1: "não permitia nenhuma alteração", 2: "só permitia preencher formulários e assinar",
+                        3: "só permitia preencher formulários, assinar e comentar"}
+
+def _describe_signature(embedded, status, index, count, later_fields):
     """Transforma o resultado da verificação em linhas para exibir: (rótulo, texto, tom).
     Só confere a integridade; quem assinou é exibido como consta no certificado, sem confirmação."""
     sig = embedded.sig_object
     cert = status.signing_cert
     certification = embedded.docmdp_level is not None
+    reason = None
 
     issuer = _cert_name(cert.issuer)
     if cert.subject == cert.issuer:
@@ -1320,32 +1324,47 @@ def _describe_signature(embedded, status, index, count):
     for key, label in (("/Reason", "Motivo"), ("/Location", "Local")):
         if sig.get(key):
             rows.append((label, str(sig[key]), None))
+    level_no = int(embedded.docmdp_level.value) if certification else None
     if certification:
-        rows.append(("Tipo", "Certificação do documento (define o que pode mudar depois)", None))
+        rows.append(("Tipo", f"Certificação do documento (nível {level_no}): "
+                             f"{CERTIFICATION_LEVELS.get(level_no, 'limitava as alterações')} depois dela", None))
 
     intact = status.intact and status.valid
     if intact:
         rows.append(("Integridade", "O conteúdo assinado não foi alterado", "ok"))
     elif not status.intact:
         rows.append(("Integridade", "O conteúdo foi alterado depois de assinado", "bad"))
+        reason = ("O conteúdo coberto por esta assinatura não é mais o mesmo que foi assinado: "
+                  "o documento foi modificado depois.")
     else:
         rows.append(("Integridade", "A assinatura não confere com o certificado", "bad"))
+        reason = "Os dados criptográficos da assinatura não conferem com o certificado que ela traz."
 
     tone = None
     if status.intact:
-        level = getattr(status.modification_level, "name", "OTHER")
-        tone, text = MODIFICATION_TEXT.get(level, MODIFICATION_TEXT["OTHER"])
+        modification = getattr(status.modification_level, "name", "OTHER")
+        tone, text = MODIFICATION_TEXT.get(modification, MODIFICATION_TEXT["OTHER"])
+        after = (f"vieram {len(later_fields)} outra(s) assinatura(s) ({', '.join(later_fields)})"
+                 if later_fields else "foram feitos outros acréscimos")
         if certification and not status.docmdp_ok:
-            tone, text = "bad", "Houve alterações que o certificador não permitia"
+            # critério rigoroso: incluir um campo de assinatura visível já conta como alteração fora do nível 2
+            tone, text = "warn", f"Depois desta certificação {after}"
+            reason = (f"Esta é uma assinatura de certificação, que "
+                      f"{CERTIFICATION_LEVELS.get(level_no, 'limitava as alterações')}. Depois dela {after}, e "
+                      "pelo critério mais rigoroso isso vai além do permitido. O caso mais comum é a "
+                      "inclusão de um carimbo de assinatura visível na página, que muitos sistemas fazem e "
+                      "o Adobe Reader aceita. O conteúdo certificado continua intacto.")
+        elif tone == "warn":
+            reason = f"{text}."
         rows.append(("Depois da assinatura", text, tone))
 
-    if not intact or tone == "bad":
+    if not intact:
         verdict, headline = "bad", "QUEBRADA"
     elif tone == "warn":
         verdict, headline = "warn", "ÍNTEGRA, COM RESSALVAS"
     else:
         verdict, headline = "ok", "ÍNTEGRA"
-    return {"verdict": verdict, "headline": headline,
+    return {"verdict": verdict, "headline": headline, "reason": reason,
             "title": f"Assinatura {index} de {count}" + (f" · campo {embedded.field_name}" if embedded.field_name else ""),
             "rows": rows}
 
@@ -1382,9 +1401,11 @@ def verify_signatures(input_files, output_dir=None, progress_callback=None, canc
                     context = ValidationContext(trust_roots=[], allow_fetching=False)
                     try:
                         status = validate_pdf_signature(sig, context)
-                        info = _describe_signature(sig, status, n, len(embedded))
+                        later = [s.field_name or f"assinatura {k}" for k, s in enumerate(embedded[n:], start=n + 1)]
+                        info = _describe_signature(sig, status, n, len(embedded), later)
                     except Exception as e:
                         info = {"verdict": "bad", "headline": "NÃO VERIFICADA",
+                                "reason": "O programa não conseguiu ler esta assinatura.",
                                 "title": f"Assinatura {n} de {len(embedded)}",
                                 "rows": [("Erro", f"Não foi possível ler esta assinatura: {e}", "bad")]}
                     counts[info["verdict"]] += 1

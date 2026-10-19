@@ -1439,12 +1439,17 @@ class SignatureReport(ctk.CTkToplevel):
                      text_color="white", corner_radius=6, font=ctk.CTkFont(weight="bold")).pack(side="left")
         ctk.CTkLabel(head, text=sig["title"], text_color="gray").pack(side="left", padx=10)
 
-        for row, (label, text, tone) in enumerate(sig["rows"], start=1):
+        first = 1
+        if sig.get("reason"):
+            ctk.CTkLabel(card, text=sig["reason"], text_color=self.TONES[sig["verdict"]], anchor="w", justify="left",
+                         wraplength=680).grid(row=1, column=0, columnspan=2, sticky="w", padx=12, pady=(0, 8))
+            first = 2
+        for row, (label, text, tone) in enumerate(sig["rows"], start=first):
             ctk.CTkLabel(card, text=label, text_color="gray", anchor="nw").grid(row=row, column=0, sticky="nw", padx=(12, 12))
             colors = {"text_color": self.TONES[tone]} if tone else {}
             ctk.CTkLabel(card, text=f"{self.ICONS[tone]}  {text}" if tone else text, anchor="w", justify="left",
-                         wraplength=520, **colors).grid(row=row, column=1, sticky="w", padx=(0, 12))
-        ctk.CTkFrame(card, height=8, fg_color="transparent").grid(row=len(sig["rows"]) + 1, column=0)
+                         wraplength=470, **colors).grid(row=row, column=1, sticky="w", padx=(0, 12))
+        ctk.CTkFrame(card, height=8, fg_color="transparent").grid(row=len(sig["rows"]) + first, column=0)
 
     def report_text(self):
         lines = ["VERIFICAÇÃO DE ASSINATURAS DIGITAIS",
@@ -1457,6 +1462,8 @@ class SignatureReport(ctk.CTkToplevel):
                 lines.append("  Nenhuma assinatura digital encontrada.")
             for sig in entry["signatures"]:
                 lines.append(f"  [{sig['headline']}] {sig['title']}")
+                if sig.get("reason"):
+                    lines.append(f"    Motivo: {sig['reason']}")
                 lines.extend(f"    {label}: {text}" for label, text, _ in sig["rows"])
             lines.append("")
         return "\n".join(lines)
